@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use cap::Cap;
 use humansize::DECIMAL;
-use jocky::actors::{AioDirectoryStreamWriter, DirectoryStreamWriter, ThreadedExecutor};
+use jocky::actors::writers::AutoWriterSelector;
 use jocky::directory::LinearSegmentWriter;
 use parking_lot::RwLock;
 use tantivy::directory::MmapDirectory;
@@ -56,8 +56,7 @@ async fn run_basic() -> anyhow::Result<()> {
 
 async fn run_stream() -> anyhow::Result<()> {
     tokio::fs::create_dir_all("./test-data").await.unwrap();
-    let mailbox = AioDirectoryStreamWriter::create("./test-data/data.index");
-    // let mailbox = actor.spawn_actor_with("directory-writer", 10, ThreadedExecutor).await;
+    let mailbox = AutoWriterSelector::create("./test-data/data.index", 2 << 30).await?;
     let directory = LinearSegmentWriter {
         writer: mailbox,
         watches: Arc::new(Default::default()),

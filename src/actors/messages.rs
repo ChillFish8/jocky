@@ -85,8 +85,8 @@ derive_message!(Commit, tantivy::Result<()>);
 pub struct Rollback;
 derive_message!(Rollback, tantivy::Result<()>);
 
-pub struct FileSize;
-derive_message!(FileSize, u64);
+pub struct SegmentSize;
+derive_message!(SegmentSize, u64);
 
 #[repr(C)]
 #[derive(Debug, Archive, Deserialize, Serialize)]

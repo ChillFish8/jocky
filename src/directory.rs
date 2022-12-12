@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use parking_lot::RwLock;
-use puppet::{ActorMailbox, DeferredResponse, Message};
+use puppet::{DeferredResponse, Message};
 use tantivy::directory::error::{DeleteError, OpenReadError, OpenWriteError};
 use tantivy::directory::{
     AntiCallToken,
@@ -20,19 +20,12 @@ use tantivy::directory::{
 };
 use tantivy::{Directory, HasLen};
 
-use crate::actors::messages::{
-    FileExists,
-    FileLen,
-    ReadRange,
-    RemoveFile,
-    WriteBuffer,
-    WriteStaticBuffer,
-};
-use crate::actors::AioDirectoryStreamWriter;
+use crate::actors::messages::WriteBuffer;
+use crate::actors::writers::AutoWriterSelector;
 
 #[derive(Clone)]
 pub struct LinearSegmentWriter {
-    pub writer: ActorMailbox<AioDirectoryStreamWriter>,
+    pub writer: AutoWriterSelector,
     pub watches: Arc<WatchCallbackList>,
     pub atomic_files: Arc<RwLock<BTreeMap<PathBuf, Vec<u8>>>>,
 }
@@ -48,40 +41,17 @@ impl Directory for LinearSegmentWriter {
         &self,
         path: &Path,
     ) -> Result<Arc<dyn FileHandle>, OpenReadError> {
-        let msg = FileLen {
-            file_path: path.to_path_buf(),
-        };
         self.writer
-            .send_sync(msg)
-            .map(|file_size| {
-                Arc::new(FileReader {
-                    path: path.to_path_buf(),
-                    writer: self.writer.clone(),
-                    file_size,
-                }) as Arc<dyn FileHandle>
-            })
+            .get_file_handle(path)
             .ok_or_else(|| OpenReadError::FileDoesNotExist(path.to_path_buf()))
     }
 
     fn delete(&self, path: &Path) -> Result<(), DeleteError> {
-        let msg = RemoveFile {
-            file_path: path.to_path_buf(),
-        };
-
-        self.writer
-            .send_sync(msg)
-            .map_err(|e| DeleteError::IoError {
-                io_error: e.into(),
-                filepath: path.to_path_buf(),
-            })
+        self.writer.delete(path)
     }
 
     fn exists(&self, path: &Path) -> Result<bool, OpenReadError> {
-        let msg = FileExists {
-            file_path: path.to_path_buf(),
-        };
-
-        Ok(self.writer.send_sync(msg))
+        Ok(self.writer.exists(path))
     }
 
     fn open_write(&self, path: &Path) -> Result<WritePtr, OpenWriteError> {
@@ -109,19 +79,7 @@ impl Directory for LinearSegmentWriter {
                 .insert(path.to_path_buf(), data.to_vec());
         }
 
-        // SAFETY:
-        // This is safe because we ensure that the buffer lives
-        // at least as long as the actor requires it for.
-        let fake_lifetime_buffer =
-            unsafe { std::mem::transmute::<_, &'static [u8]>(data) };
-
-        let msg = WriteStaticBuffer {
-            file_path: path.to_path_buf(),
-            buffer: fake_lifetime_buffer,
-            overwrite: true,
-        };
-
-        self.writer.send_sync(msg)
+        self.writer.atomic_write(path, data)
     }
 
     fn sync_directory(&self) -> std::io::Result<()> {
@@ -135,7 +93,7 @@ impl Directory for LinearSegmentWriter {
 
 pub struct MessageWriter {
     path: PathBuf,
-    writer: ActorMailbox<AioDirectoryStreamWriter>,
+    writer: AutoWriterSelector,
     deferred: Option<DeferredResponse<<WriteBuffer as Message>::Output>>,
 }
 
@@ -149,13 +107,7 @@ impl Write for MessageWriter {
 
         let n = buf.len();
 
-        let msg = WriteBuffer {
-            file_path: self.path.to_path_buf(),
-            buffer: buf.to_vec(),
-            overwrite: false,
-        };
-
-        let deferred = futures_lite::future::block_on(self.writer.deferred_send(msg));
+        let deferred = self.writer.write(&self.path, buf);
         self.deferred = Some(deferred);
 
         Ok(n)
@@ -173,9 +125,9 @@ impl TerminatingWrite for MessageWriter {
 }
 
 pub struct FileReader {
-    path: PathBuf,
-    file_size: usize,
-    writer: ActorMailbox<AioDirectoryStreamWriter>,
+    pub path: PathBuf,
+    pub file_size: usize,
+    pub writer: AutoWriterSelector,
 }
 
 impl Debug for FileReader {
@@ -192,12 +144,7 @@ impl HasLen for FileReader {
 
 impl FileHandle for FileReader {
     fn read_bytes(&self, range: Range<usize>) -> std::io::Result<OwnedBytes> {
-        let msg = ReadRange {
-            range,
-            file_path: self.path.clone(),
-        };
-
-        let buf = self.writer.send_sync(msg)?;
+        let buf = self.writer.read(&self.path, range)?;
         Ok(OwnedBytes::new(buf))
     }
 }
