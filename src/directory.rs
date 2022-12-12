@@ -177,8 +177,7 @@ impl FileHandle for FileReader {
         };
 
         let buf = self.writer
-            .send_sync(msg)
-            .expect("Read operation should not be dropped.")?;
+            .send_sync(msg)?;
         Ok(OwnedBytes::new(buf))
     }
 }

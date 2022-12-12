@@ -48,7 +48,7 @@ pub struct ReadRange {
     pub file_path: PathBuf,
     pub range: Range<usize>,
 }
-derive_message!(ReadRange, Option<io::Result<Vec<u8>>>);
+derive_message!(ReadRange, io::Result<Vec<u8>>);
 
 /// Reads a range of data from the file.
 pub struct FileLen {

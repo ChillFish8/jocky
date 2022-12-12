@@ -10,7 +10,7 @@ use glommio::io::{DmaFile, DmaStreamWriter, DmaStreamWriterBuilder, MergedBuffer
 use futures_lite::{AsyncWriteExt, StreamExt};
 use glommio::Placement;
 use itertools::Itertools;
-use puppet::{Actor, ActorMailbox, puppet_actor, Reply};
+use puppet::{Actor, ActorMailbox, puppet_actor};
 
 use crate::actors::messages::{FileExists, FileLen, FileSize, ReadRange, WriteStaticBuffer};
 use super::messages::{RemoveFile, WriteBuffer};
@@ -129,15 +129,10 @@ impl AioDirectoryStreamWriter {
         Ok(())
     }
 
-    #[puppet_with_reply]
-    async fn read_range(&mut self, msg: ReadRange, reply: Reply<Option<io::Result<Vec<u8>>>>) {
-        let fragments = match self.fragments.get(&msg.file_path) {
-            None => {
-                reply.reply(Some(Err(io::Error::new(ErrorKind::NotFound, "File not found"))));
-                return;
-            },
-            Some(fragments) => fragments,
-        };
+    #[puppet]
+    async fn read_range(&mut self, msg: ReadRange) -> io::Result<Vec<u8>> {
+        let fragments = self.fragments.get(&msg.file_path)
+            .ok_or_else(|| io::Error::new(ErrorKind::NotFound, "File not found"))?;
 
         let mut max_selection_area = 0;
         let fragments_iter = fragments
@@ -149,16 +144,10 @@ impl AioDirectoryStreamWriter {
             .cloned()
             .sorted_by_key(|range| range.start);
 
-        if let Err(e) = self.ensure_flushed_to(max_selection_area).await {
-            reply.reply(Some(Err(e)));
-            return;
-        }
+        self.ensure_flushed_to(max_selection_area).await?;
 
         let file = self.file.clone();
-        glommio::spawn_local(async move {
-            let res = read_fragmented_buffer(file, msg, fragments_iter).await;
-            reply.reply(Some(res));
-        }).detach();
+        read_fragmented_buffer(file, msg, fragments_iter).await
     }
 
     pub async fn writer_mut(&mut self) -> io::Result<&mut DmaStreamWriter> {
