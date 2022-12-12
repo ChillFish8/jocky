@@ -14,6 +14,8 @@ The writers have more stable performance since they depend less on the file cach
 
 ![image](https://user-images.githubusercontent.com/57491488/207173717-b64bae6b-51e5-4e1b-a293-b8b16b29ec57.png)
 ![image](https://user-images.githubusercontent.com/57491488/207174299-d75e4215-f865-4494-bd86-e7d9b2a08a4e.png)
+![image](https://user-images.githubusercontent.com/57491488/207178010-76b469f4-7044-4868-afd7-654eda6031b2.png)
+
 *Writes are messured in negative MiB/s for some reason, but just ignore the `-`*
 
 These unfinished segments as such can then be exported to a new file as the finished 'segment' as such, with each file re-organised to be contiguous. 
