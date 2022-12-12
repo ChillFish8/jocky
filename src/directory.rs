@@ -8,12 +8,27 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 use puppet::{ActorMailbox, DeferredResponse, Message};
 use tantivy::directory::error::{DeleteError, OpenReadError, OpenWriteError};
-use tantivy::directory::{AntiCallToken, FileHandle, OwnedBytes, TerminatingWrite, WatchCallback, WatchCallbackList, WatchHandle, WritePtr};
+use tantivy::directory::{
+    AntiCallToken,
+    FileHandle,
+    OwnedBytes,
+    TerminatingWrite,
+    WatchCallback,
+    WatchCallbackList,
+    WatchHandle,
+    WritePtr,
+};
 use tantivy::{Directory, HasLen};
 
+use crate::actors::messages::{
+    FileExists,
+    FileLen,
+    ReadRange,
+    RemoveFile,
+    WriteBuffer,
+    WriteStaticBuffer,
+};
 use crate::actors::AioDirectoryStreamWriter;
-use crate::actors::messages::{FileExists, FileLen, ReadRange, RemoveFile, WriteBuffer, WriteStaticBuffer};
-
 
 #[derive(Clone)]
 pub struct LinearSegmentWriter {
@@ -29,15 +44,21 @@ impl Debug for LinearSegmentWriter {
 }
 
 impl Directory for LinearSegmentWriter {
-    fn get_file_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>, OpenReadError> {
+    fn get_file_handle(
+        &self,
+        path: &Path,
+    ) -> Result<Arc<dyn FileHandle>, OpenReadError> {
         let msg = FileLen {
             file_path: path.to_path_buf(),
         };
         self.writer
             .send_sync(msg)
             .map(|file_size| {
-                Arc::new(FileReader { path: path.to_path_buf(), writer: self.writer.clone(), file_size })
-                    as Arc<dyn FileHandle>
+                Arc::new(FileReader {
+                    path: path.to_path_buf(),
+                    writer: self.writer.clone(),
+                    file_size,
+                }) as Arc<dyn FileHandle>
             })
             .ok_or_else(|| OpenReadError::FileDoesNotExist(path.to_path_buf()))
     }
@@ -49,7 +70,10 @@ impl Directory for LinearSegmentWriter {
 
         self.writer
             .send_sync(msg)
-            .map_err(|e| DeleteError::IoError { io_error: e.into(), filepath: path.to_path_buf() })
+            .map_err(|e| DeleteError::IoError {
+                io_error: e.into(),
+                filepath: path.to_path_buf(),
+            })
     }
 
     fn exists(&self, path: &Path) -> Result<bool, OpenReadError> {
@@ -88,9 +112,8 @@ impl Directory for LinearSegmentWriter {
         // SAFETY:
         // This is safe because we ensure that the buffer lives
         // at least as long as the actor requires it for.
-        let fake_lifetime_buffer = unsafe {
-            std::mem::transmute::<_, &'static [u8]>(data)
-        };
+        let fake_lifetime_buffer =
+            unsafe { std::mem::transmute::<_, &'static [u8]>(data) };
 
         let msg = WriteStaticBuffer {
             file_path: path.to_path_buf(),
@@ -110,11 +133,10 @@ impl Directory for LinearSegmentWriter {
     }
 }
 
-
 pub struct MessageWriter {
     path: PathBuf,
     writer: ActorMailbox<AioDirectoryStreamWriter>,
-    deferred: Option<DeferredResponse<<WriteBuffer as Message>::Output>>
+    deferred: Option<DeferredResponse<<WriteBuffer as Message>::Output>>,
 }
 
 impl Write for MessageWriter {
@@ -124,7 +146,7 @@ impl Write for MessageWriter {
                 return Err(e);
             }
         }
-        
+
         let n = buf.len();
 
         let msg = WriteBuffer {
@@ -149,7 +171,6 @@ impl TerminatingWrite for MessageWriter {
         Ok(())
     }
 }
-
 
 pub struct FileReader {
     path: PathBuf,
@@ -176,8 +197,7 @@ impl FileHandle for FileReader {
             file_path: self.path.clone(),
         };
 
-        let buf = self.writer
-            .send_sync(msg)?;
+        let buf = self.writer.send_sync(msg)?;
         Ok(OwnedBytes::new(buf))
     }
 }

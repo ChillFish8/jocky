@@ -2,11 +2,11 @@ use std::io;
 use std::ops::Range;
 use std::path::PathBuf;
 
-use puppet::derive_message;
-use tantivy::{DateTime, Document};
 use bytecheck::CheckBytes;
-use rkyv::{Archive, Serialize, Deserialize};
+use puppet::derive_message;
+use rkyv::{Archive, Deserialize, Serialize};
 use tantivy::schema::Facet;
+use tantivy::{DateTime, Document};
 
 /// Copy a file's content into the segment writer.
 pub struct WriteFile {

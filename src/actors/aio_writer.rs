@@ -1,19 +1,31 @@
 use std::collections::BTreeMap;
-use std::{cmp, io, vec};
 use std::io::ErrorKind;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
+use std::{cmp, io, vec};
 
-use glommio::io::{DmaFile, DmaStreamWriter, DmaStreamWriterBuilder, MergedBufferLimit, ReadAmplificationLimit};
 use futures_lite::{AsyncWriteExt, StreamExt};
+use glommio::io::{
+    DmaFile,
+    DmaStreamWriter,
+    DmaStreamWriterBuilder,
+    MergedBufferLimit,
+    ReadAmplificationLimit,
+};
 use glommio::Placement;
 use itertools::Itertools;
-use puppet::{Actor, ActorMailbox, puppet_actor};
+use puppet::{puppet_actor, Actor, ActorMailbox};
 
-use crate::actors::messages::{FileExists, FileLen, FileSize, ReadRange, WriteStaticBuffer};
 use super::messages::{RemoveFile, WriteBuffer};
+use crate::actors::messages::{
+    FileExists,
+    FileLen,
+    FileSize,
+    ReadRange,
+    WriteStaticBuffer,
+};
 
 pub struct AioDirectoryStreamWriter {
     path: PathBuf,
@@ -43,7 +55,8 @@ impl AioDirectoryStreamWriter {
                 };
 
                 actor.run_actor(rx).await;
-            }).unwrap();
+            })
+            .unwrap();
 
         let name = std::borrow::Cow::Owned("AioDirectoryWriter".to_string());
         ActorMailbox::new(tx, name)
@@ -131,7 +144,9 @@ impl AioDirectoryStreamWriter {
 
     #[puppet]
     async fn read_range(&mut self, msg: ReadRange) -> io::Result<Vec<u8>> {
-        let fragments = self.fragments.get(&msg.file_path)
+        let fragments = self
+            .fragments
+            .get(&msg.file_path)
             .ok_or_else(|| io::Error::new(ErrorKind::NotFound, "File not found"))?;
 
         let mut max_selection_area = 0;
@@ -155,16 +170,13 @@ impl AioDirectoryStreamWriter {
             self.lazy_init().await?;
         }
 
-        self.writer
-            .as_mut()
-            .ok_or_else(|| io::Error::new(ErrorKind::Other, "Writer has already been finalised."))
+        self.writer.as_mut().ok_or_else(|| {
+            io::Error::new(ErrorKind::Other, "Writer has already been finalised.")
+        })
     }
 
     pub fn mark_fragment_location(&mut self, path: PathBuf, location: Range<u64>) {
-        self.fragments
-            .entry(path)
-            .or_default()
-            .push(location);
+        self.fragments.entry(path).or_default().push(location);
     }
 
     async fn ensure_flushed_to(&mut self, max_selection_area: u64) -> io::Result<()> {
@@ -178,7 +190,6 @@ impl AioDirectoryStreamWriter {
     }
 }
 
-
 /// Reads a given range as if was a separate file.
 ///
 /// In the very nature of the writer, reads can be heavily fragmented so naturally this can
@@ -189,10 +200,12 @@ async fn read_fragmented_buffer(
     msg: ReadRange,
     fragments_iter: vec::IntoIter<Range<u64>>,
 ) -> io::Result<Vec<u8>> {
-    let file = file.ok_or_else(|| io::Error::new(
-        ErrorKind::Other,
-        "File has not be initialised, this is a bug.",
-    ))?;
+    let file = file.ok_or_else(|| {
+        io::Error::new(
+            ErrorKind::Other,
+            "File has not be initialised, this is a bug.",
+        )
+    })?;
 
     let mut num_bytes_to_skip = msg.range.start;
     let mut buffer = Vec::with_capacity(msg.range.len());
@@ -208,7 +221,7 @@ async fn read_fragmented_buffer(
 
         if fragment_len < num_bytes_to_skip as u64 {
             num_bytes_to_skip -= fragment_len as usize;
-            continue
+            continue;
         }
 
         // We don't want to read the bytes we dont care about.
@@ -227,7 +240,7 @@ async fn read_fragmented_buffer(
     let mut stream = file.read_many(
         read_requests,
         MergedBufferLimit::Custom(512 << 10),
-        ReadAmplificationLimit::Custom(64 << 10)
+        ReadAmplificationLimit::Custom(64 << 10),
     );
 
     let mut results = Vec::new();

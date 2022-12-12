@@ -1,11 +1,12 @@
-use std::collections::{BTreeMap, BTreeSet};
-use std::{io, mem};
 use std::array::TryFromSliceError;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{ErrorKind, Write};
 use std::ops::Range;
-use datacake_crdt::HLCTimestamp;
+use std::{io, mem};
+
 use bytecheck::CheckBytes;
-use rkyv::{Serialize, Deserialize, Archive};
+use datacake_crdt::HLCTimestamp;
+use rkyv::{Archive, Deserialize, Serialize};
 
 pub const METADATA_HEADER_SIZE: usize = mem::size_of::<u64>() * 2;
 
@@ -19,7 +20,7 @@ pub struct SegmentMetadata {
 
 impl SegmentMetadata {
     pub fn new(id: HLCTimestamp) -> Self {
-        Self{
+        Self {
             segment_id: id,
             indexes: BTreeSet::new(),
             files: BTreeMap::new(),
@@ -29,16 +30,17 @@ impl SegmentMetadata {
     pub fn to_bytes(&self) -> io::Result<Vec<u8>> {
         rkyv::to_bytes::<_, 4096>(self)
             .map(|buf| buf.into_vec())
-            .map_err(|_| io::Error::new(ErrorKind::Other, "Could not serialize metadata."))
+            .map_err(|_| {
+                io::Error::new(ErrorKind::Other, "Could not serialize metadata.")
+            })
     }
 
     pub fn from_buffer(buf: &[u8]) -> io::Result<Self> {
-        rkyv::from_bytes(buf)
-            .map_err(|_| io::Error::new(ErrorKind::Other, "Could not deserialize metadata."))
+        rkyv::from_bytes(buf).map_err(|_| {
+            io::Error::new(ErrorKind::Other, "Could not deserialize metadata.")
+        })
     }
 }
-
-
 
 pub fn get_metadata_offsets(
     mut offset_slice: &[u8],

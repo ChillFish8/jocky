@@ -6,9 +6,15 @@ use std::path::{Path, PathBuf};
 
 use itertools::Itertools;
 use puppet::puppet_actor;
-use crate::actors::messages::{FileExists, FileLen, FileSize, ReadRange, WriteStaticBuffer};
 
 use super::messages::{RemoveFile, WriteBuffer};
+use crate::actors::messages::{
+    FileExists,
+    FileLen,
+    FileSize,
+    ReadRange,
+    WriteStaticBuffer,
+};
 
 pub const BUFFER_CAPACITY: usize = 512 << 10;
 
@@ -31,10 +37,12 @@ impl DirectoryStreamWriter {
         let (writer, file) = tokio::task::spawn_blocking(move || {
             let writer = File::create(&path)?;
             writer.set_len(4 << 30)?;
-            let reader =  File::open(&path)?;
+            let reader = File::open(&path)?;
 
             Ok::<_, io::Error>((writer, reader))
-        }).await.expect("Spawn blocking")?;
+        })
+        .await
+        .expect("Spawn blocking")?;
 
         Ok(Self {
             current_pos: 0,
@@ -73,8 +81,7 @@ impl DirectoryStreamWriter {
         }
 
         let start = self.current_pos as u64;
-        self.writer_mut()?
-            .write_all(msg.buffer)?;
+        self.writer_mut()?.write_all(msg.buffer)?;
         self.current_pos += msg.buffer.len();
         let end = self.current_pos as u64;
 
@@ -90,8 +97,7 @@ impl DirectoryStreamWriter {
         }
 
         let start = self.current_pos as u64;
-        self.writer_mut()?
-            .write_all(&msg.buffer)?;
+        self.writer_mut()?.write_all(&msg.buffer)?;
         self.current_pos += msg.buffer.len();
         let end = self.current_pos as u64;
 
@@ -109,17 +115,14 @@ impl DirectoryStreamWriter {
     #[puppet]
     async fn read_range(&mut self, msg: ReadRange) -> io::Result<Vec<u8>> {
         // Ensure the writer buffer is actually flushed.
-        self.writer_mut()?
-            .flush()?;
+        self.writer_mut()?.flush()?;
 
         let fragments = match self.fragments.get(&msg.file_path) {
             None => return Err(io::Error::new(ErrorKind::NotFound, "File not found")),
             Some(fragments) => fragments,
         };
 
-        let fragments_iter = fragments
-            .iter()
-            .sorted_by_key(|range| range.start);
+        let fragments_iter = fragments.iter().sorted_by_key(|range| range.start);
 
         let mut num_bytes_to_skip = msg.range.start;
         let mut buffer = Vec::with_capacity(msg.range.len());
@@ -128,7 +131,7 @@ impl DirectoryStreamWriter {
 
             if fragment_len < num_bytes_to_skip as u64 {
                 num_bytes_to_skip -= fragment_len as usize;
-                continue
+                continue;
             }
 
             // We don't want to read the bytes we dont care about.
@@ -150,16 +153,12 @@ impl DirectoryStreamWriter {
     }
 
     pub fn writer_mut(&mut self) -> io::Result<&mut BufWriter<File>> {
-        self.writer
-            .as_mut()
-            .ok_or_else(|| io::Error::new(ErrorKind::Other, "Writer has already been finalised."))
+        self.writer.as_mut().ok_or_else(|| {
+            io::Error::new(ErrorKind::Other, "Writer has already been finalised.")
+        })
     }
 
     pub fn mark_fragment_location(&mut self, path: PathBuf, location: Range<u64>) {
-        self.fragments
-            .entry(path)
-            .or_default()
-            .push(location);
+        self.fragments.entry(path).or_default().push(location);
     }
 }
-

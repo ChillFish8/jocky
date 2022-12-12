@@ -1,22 +1,21 @@
+use std::alloc;
 use std::sync::Arc;
+
+use cap::Cap;
+use humansize::DECIMAL;
+use jocky::actors::{AioDirectoryStreamWriter, DirectoryStreamWriter, ThreadedExecutor};
+use jocky::directory::LinearSegmentWriter;
 use parking_lot::RwLock;
-use tantivy::{Directory, doc, Index, IndexSettings};
 use tantivy::directory::MmapDirectory;
 use tantivy::schema::{Schema, STORED, TEXT};
+use tantivy::{doc, Directory, Index, IndexSettings};
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::time::Instant;
 use tracing::info;
-use jocky::actors::{AioDirectoryStreamWriter, DirectoryStreamWriter, ThreadedExecutor};
-use jocky::directory::LinearSegmentWriter;
-
-use std::alloc;
-use cap::Cap;
-use humansize::DECIMAL;
 
 #[global_allocator]
 static ALLOCATOR: Cap<alloc::System> = Cap::new(alloc::System, usize::MAX);
-
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct Document {
@@ -32,7 +31,6 @@ pub struct Document {
     pub commit_id: String,
     pub body: String,
 }
-
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -50,10 +48,7 @@ async fn main() -> anyhow::Result<()> {
 async fn run_basic() -> anyhow::Result<()> {
     let dir = MmapDirectory::open("./test-data/haha")?;
 
-    index_data(
-        dir,
-        200_000_000,
-    ).await?;
+    index_data(dir, 200_000_000).await?;
     println!("Basic ^^^");
 
     Ok(())
@@ -69,19 +64,13 @@ async fn run_stream() -> anyhow::Result<()> {
         atomic_files: Arc::new(RwLock::default()),
     };
 
-    index_data(
-        directory,
-        80_000_000,
-    ).await?;
+    index_data(directory, 80_000_000).await?;
     println!("Stream ^^^");
 
     Ok(())
 }
 
-async fn index_data(
-    directory: impl Directory,
-    buffer: usize,
-) -> anyhow::Result<()> {
+async fn index_data(directory: impl Directory, buffer: usize) -> anyhow::Result<()> {
     let mut schema_builder = Schema::builder();
 
     let data = schema_builder.add_json_field("data", TEXT | STORED);
@@ -93,8 +82,9 @@ async fn index_data(
         IndexSettings {
             docstore_blocksize: 1 << 20,
             ..Default::default()
-        }
-    ).expect("Create index.");
+        },
+    )
+    .expect("Create index.");
 
     let mut index_writer = index.writer(buffer).expect("Create index writer.");
 
@@ -106,7 +96,8 @@ async fn index_data(
         let reader = BufReader::with_capacity(512 << 20, file);
         let mut lines = reader.lines();
         while let Some(line) = lines.next_line().await? {
-            let doc: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&line)?;
+            let doc: serde_json::Map<String, serde_json::Value> =
+                serde_json::from_str(&line)?;
 
             counter += 1;
             if (counter % 1_000_000) == 0 {
@@ -131,7 +122,6 @@ async fn index_data(
         humansize::format_size(average, DECIMAL),
         counter,
     );
-
 
     Ok(())
 }
