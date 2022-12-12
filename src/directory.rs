@@ -176,7 +176,9 @@ impl FileHandle for FileReader {
             file_path: self.path.clone(),
         };
 
-        let buf = self.writer.send_sync(msg)?;
+        let buf = self.writer
+            .send_sync(msg)
+            .expect("Read operation should not be dropped.")?;
         Ok(OwnedBytes::new(buf))
     }
 }

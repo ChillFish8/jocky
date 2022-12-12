@@ -107,7 +107,24 @@ impl DirectoryStreamWriter {
     }
 
     #[puppet]
-    async fn read_range(&mut self, msg: ReadRange) -> io::Result<Vec<u8>> {
+    async fn read_range(&mut self, msg: ReadRange) -> Option<io::Result<Vec<u8>>> {
+        Some(self.read_fragmented_buffer(msg).await)
+    }
+
+    pub fn writer_mut(&mut self) -> io::Result<&mut BufWriter<File>> {
+        self.writer
+            .as_mut()
+            .ok_or_else(|| io::Error::new(ErrorKind::Other, "Writer has already been finalised."))
+    }
+
+    pub fn mark_fragment_location(&mut self, path: PathBuf, location: Range<u64>) {
+        self.fragments
+            .entry(path)
+            .or_default()
+            .push(location);
+    }
+
+    async fn read_fragmented_buffer(&mut self, msg: ReadRange) -> io::Result<Vec<u8>> {
         // Ensure the writer buffer is actually flushed.
         self.writer_mut()?
             .flush()?;
@@ -147,19 +164,6 @@ impl DirectoryStreamWriter {
 
         buffer.truncate(msg.range.len());
         Ok(buffer)
-    }
-
-    pub fn writer_mut(&mut self) -> io::Result<&mut BufWriter<File>> {
-        self.writer
-            .as_mut()
-            .ok_or_else(|| io::Error::new(ErrorKind::Other, "Writer has already been finalised."))
-    }
-
-    pub fn mark_fragment_location(&mut self, path: PathBuf, location: Range<u64>) {
-        self.fragments
-            .entry(path)
-            .or_default()
-            .push(location);
     }
 }
 

@@ -1,17 +1,16 @@
 use std::collections::BTreeMap;
-use std::{cmp, io};
+use std::{cmp, io, vec};
 use std::io::ErrorKind;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use glommio::io::{DmaFile, DmaStreamWriter, DmaStreamWriterBuilder, MergedBufferLimit, ReadAmplificationLimit};
 use futures_lite::{AsyncWriteExt, StreamExt};
 use glommio::Placement;
 use itertools::Itertools;
-use puppet::{Actor, ActorMailbox, puppet_actor};
-use tracing::info;
+use puppet::{Actor, ActorMailbox, puppet_actor, Reply};
 
 use crate::actors::messages::{FileExists, FileLen, FileSize, ReadRange, WriteStaticBuffer};
 use super::messages::{RemoveFile, WriteBuffer};
@@ -52,7 +51,7 @@ impl AioDirectoryStreamWriter {
 
     async fn lazy_init(&mut self) -> io::Result<()> {
         let file = DmaFile::create(self.path.as_path()).await?;
-        file.pre_allocate(2 << 30).await?;
+        file.pre_allocate(3 << 30).await?;
         let writer = DmaStreamWriterBuilder::new(file)
             .with_buffer_size(512 << 10)
             .with_write_behind(10)
@@ -130,10 +129,13 @@ impl AioDirectoryStreamWriter {
         Ok(())
     }
 
-    #[puppet]
-    async fn read_range(&mut self, msg: ReadRange) -> io::Result<Vec<u8>> {
+    #[puppet_with_reply]
+    async fn read_range(&mut self, msg: ReadRange, reply: Reply<Option<io::Result<Vec<u8>>>>) {
         let fragments = match self.fragments.get(&msg.file_path) {
-            None => return Err(io::Error::new(ErrorKind::NotFound, "File not found")),
+            None => {
+                reply.reply(Some(Err(io::Error::new(ErrorKind::NotFound, "File not found"))));
+                return;
+            },
             Some(fragments) => fragments,
         };
 
@@ -147,67 +149,16 @@ impl AioDirectoryStreamWriter {
             .cloned()
             .sorted_by_key(|range| range.start);
 
-        // Ensure our inflight buffers are not needed.
-        let writer = self.writer_mut().await?;
-        let flushed_pos = writer.current_flushed_pos();
-        if max_selection_area > flushed_pos {
-            writer.flush().await?;
+        if let Err(e) = self.ensure_flushed_to(max_selection_area).await {
+            reply.reply(Some(Err(e)));
+            return;
         }
 
-        let file = self.file().await?;
-        let mut num_bytes_to_skip = msg.range.start;
-        let mut buffer = Vec::with_capacity(msg.range.len());
-
-        let mut total_bytes_planned_read = 0;
-        let mut selected_fragments = Vec::new();
-        for range in fragments_iter {
-            if total_bytes_planned_read >= msg.range.len() {
-                break;
-            }
-
-            let fragment_len = range.end - range.start;
-
-            if fragment_len < num_bytes_to_skip as u64 {
-                num_bytes_to_skip -= fragment_len as usize;
-                continue
-            }
-
-            // We don't want to read the bytes we dont care about.
-            let seek_to = range.start + num_bytes_to_skip as u64;
-
-            // We've skipped all the bytes we need to.
-            num_bytes_to_skip = 0;
-
-            let len = range.end - seek_to;
-            selected_fragments.push((seek_to, len as usize));
-
-            total_bytes_planned_read += len as usize;
-        }
-
-        let read_requests = futures_lite::stream::iter(selected_fragments);
-        let mut stream = file.read_many(
-            read_requests,
-            MergedBufferLimit::Custom(512 << 10),
-            ReadAmplificationLimit::Custom(4 << 10)
-        );
-
-        // let start = Instant::now();
-        let mut results = Vec::new();
-        while let Some(result) = stream.next().await {
-            let ((start, _), res) = result.map_err(|e| {
-                io::Error::new(ErrorKind::WouldBlock, "Yeet it was the read many.")
-            })?;
-            results.push((start, res));
-        }
-        results.sort_by_key(|v| v.0);
-        // info!(range = ?msg.range, "Many read completed! {:?}", start.elapsed());
-
-        for (_, data) in results {
-            buffer.extend_from_slice(&data);
-        }
-
-        buffer.truncate(msg.range.len());
-        Ok(buffer)
+        let file = self.file.clone();
+        glommio::spawn_local(async move {
+            let res = read_fragmented_buffer(file, msg, fragments_iter).await;
+            reply.reply(Some(res));
+        }).detach();
     }
 
     pub async fn writer_mut(&mut self) -> io::Result<&mut DmaStreamWriter> {
@@ -220,21 +171,87 @@ impl AioDirectoryStreamWriter {
             .ok_or_else(|| io::Error::new(ErrorKind::Other, "Writer has already been finalised."))
     }
 
-    pub async fn file(&mut self) -> io::Result<&Rc<DmaFile>> {
-        if self.file.is_none() {
-            self.lazy_init().await?;
-        }
-
-        self.file
-            .as_ref()
-            .ok_or_else(|| io::Error::new(ErrorKind::Other, "Writer has already been finalised."))
-    }
-
     pub fn mark_fragment_location(&mut self, path: PathBuf, location: Range<u64>) {
         self.fragments
             .entry(path)
             .or_default()
             .push(location);
     }
+
+    async fn ensure_flushed_to(&mut self, max_selection_area: u64) -> io::Result<()> {
+        // Ensure our inflight buffers are not needed.
+        let writer = self.writer_mut().await?;
+        let flushed_pos = writer.current_flushed_pos();
+        if max_selection_area > flushed_pos {
+            writer.flush().await?;
+        }
+        Ok(())
+    }
 }
 
+
+/// Reads a given range as if was a separate file.
+///
+/// In the very nature of the writer, reads can be heavily fragmented so naturally this can
+/// lead to a reasonable high amount of random reads, although the reader API will try optimise
+/// it as best as it can.
+async fn read_fragmented_buffer(
+    file: Option<Rc<DmaFile>>,
+    msg: ReadRange,
+    fragments_iter: vec::IntoIter<Range<u64>>,
+) -> io::Result<Vec<u8>> {
+    let file = file.ok_or_else(|| io::Error::new(
+        ErrorKind::Other,
+        "File has not be initialised, this is a bug.",
+    ))?;
+
+    let mut num_bytes_to_skip = msg.range.start;
+    let mut buffer = Vec::with_capacity(msg.range.len());
+
+    let mut total_bytes_planned_read = 0;
+    let mut selected_fragments = Vec::new();
+    for range in fragments_iter {
+        if total_bytes_planned_read >= msg.range.len() {
+            break;
+        }
+
+        let fragment_len = range.end - range.start;
+
+        if fragment_len < num_bytes_to_skip as u64 {
+            num_bytes_to_skip -= fragment_len as usize;
+            continue
+        }
+
+        // We don't want to read the bytes we dont care about.
+        let seek_to = range.start + num_bytes_to_skip as u64;
+
+        // We've skipped all the bytes we need to.
+        num_bytes_to_skip = 0;
+
+        let len = range.end - seek_to;
+        selected_fragments.push((seek_to, len as usize));
+
+        total_bytes_planned_read += len as usize;
+    }
+
+    let read_requests = futures_lite::stream::iter(selected_fragments);
+    let mut stream = file.read_many(
+        read_requests,
+        MergedBufferLimit::Custom(512 << 10),
+        ReadAmplificationLimit::Custom(64 << 10)
+    );
+
+    let mut results = Vec::new();
+    while let Some(result) = stream.next().await {
+        let ((start, _), res) = result?;
+        results.push((start, res));
+    }
+    results.sort_by_key(|v| v.0);
+
+    for (_, data) in results {
+        buffer.extend_from_slice(&data);
+    }
+
+    buffer.truncate(msg.range.len());
+    Ok(buffer)
+}

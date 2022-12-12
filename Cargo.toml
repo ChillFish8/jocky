@@ -20,8 +20,10 @@ anyhow = "1"
 tracing = "0.1.37"
 tracing-subscriber = "0.3.16"
 glommio = "0.7.0"
+cap = "0.1.1"
+humansize = "2.1.2"
 
-puppet = { version = "0.3.0", default-features = false }
+puppet = { version = "0.4.0", default-features = false }
 serde = { version = "1", features = ["derive"]}
 tokio = { version = "1", features = ["full"] }
 datacake-crdt = { version = "0.3.0", features = ["rkyv-support"] }
