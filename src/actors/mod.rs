@@ -1,13 +1,12 @@
 use std::future::Future;
 use puppet::Executor;
 
-mod indexer;
-mod merger;
-mod exporter;
 pub mod messages;
 mod writer;
+mod aio_writer;
 
 pub use writer::DirectoryStreamWriter;
+pub use aio_writer::AioDirectoryStreamWriter;
 
 pub struct ThreadedExecutor;
 impl Executor for ThreadedExecutor {

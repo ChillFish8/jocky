@@ -2,13 +2,11 @@ use std::io;
 use std::ops::Range;
 use std::path::PathBuf;
 
-use bytes::Bytes;
-use puppet::{ActorMailbox, derive_message};
+use puppet::derive_message;
 use tantivy::{DateTime, Document};
 use bytecheck::CheckBytes;
 use rkyv::{Archive, Serialize, Deserialize};
 use tantivy::schema::Facet;
-use crate::actors::exporter::SegmentWriter;
 
 /// Copy a file's content into the segment writer.
 pub struct WriteFile {
@@ -19,7 +17,8 @@ derive_message!(WriteFile, io::Result<()>);
 /// Writes a buffer into the segment writer.
 pub struct WriteBuffer {
     pub file_path: PathBuf,
-    pub buffer: Bytes,
+    pub buffer: Vec<u8>,
+    pub overwrite: bool,
 }
 derive_message!(WriteBuffer, io::Result<()>);
 
@@ -79,7 +78,7 @@ pub struct RemoveDocuments {
 derive_message!(RemoveDocuments, tantivy::Result<()>);
 
 pub struct Commit {
-    pub writer: ActorMailbox<SegmentWriter>
+    // pub writer: ActorMailbox<SegmentWriter>
 }
 derive_message!(Commit, tantivy::Result<()>);
 

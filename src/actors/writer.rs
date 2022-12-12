@@ -1,19 +1,16 @@
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::io;
-use std::io::{BufWriter, ErrorKind, Read, Seek, SeekFrom, Write};
+use std::io::{self, BufWriter, ErrorKind, Read, Seek, SeekFrom, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use itertools::Itertools;
 use puppet::puppet_actor;
-use tracing::{info, warn};
 use crate::actors::messages::{FileExists, FileLen, FileSize, ReadRange, WriteStaticBuffer};
 
 use super::messages::{RemoveFile, WriteBuffer};
-use super::exporter::BLOCK_SIZE;
 
-pub const BUFFER_CAPACITY: usize = BLOCK_SIZE * 10;
+pub const BUFFER_CAPACITY: usize = 512 << 10;
 
 pub struct DirectoryStreamWriter {
     current_pos: usize,
@@ -33,6 +30,7 @@ impl DirectoryStreamWriter {
         let path = file_path.as_ref().to_path_buf();
         let (writer, file) = tokio::task::spawn_blocking(move || {
             let writer = File::create(&path)?;
+            writer.set_len(4 << 30)?;
             let reader =  File::open(&path)?;
 
             Ok::<_, io::Error>((writer, reader))
@@ -77,6 +75,23 @@ impl DirectoryStreamWriter {
         let start = self.current_pos as u64;
         self.writer_mut()?
             .write_all(msg.buffer)?;
+        self.current_pos += msg.buffer.len();
+        let end = self.current_pos as u64;
+
+        self.mark_fragment_location(msg.file_path, start..end);
+
+        Ok(())
+    }
+
+    #[puppet]
+    async fn write_fragment_owned(&mut self, msg: WriteBuffer) -> io::Result<()> {
+        if msg.overwrite {
+            self.fragments.remove(&msg.file_path);
+        }
+
+        let start = self.current_pos as u64;
+        self.writer_mut()?
+            .write_all(&msg.buffer)?;
         self.current_pos += msg.buffer.len();
         let end = self.current_pos as u64;
 
