@@ -105,6 +105,11 @@ impl DirectoryStreamWriter {
     }
 
     #[puppet]
+    /// Reads a given range as if was a separate file.
+    ///
+    /// In the very nature of the writer, reads can be heavily fragmented so naturally this can
+    /// lead to a reasonable high amount of random reads, although the reader API will try optimise
+    /// it as best as it can.
     async fn read_range(&mut self, msg: ReadRange) -> io::Result<Vec<u8>> {
         // Ensure the writer buffer is actually flushed.
         self.writer_mut()?.flush()?;

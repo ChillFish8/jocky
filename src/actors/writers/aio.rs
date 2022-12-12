@@ -15,15 +15,7 @@ use glommio::io::{
 use glommio::Placement;
 use puppet::{puppet_actor, Actor, ActorMailbox};
 
-use crate::actors::messages::{
-    FileExists,
-    FileLen,
-    ReadRange,
-    RemoveFile,
-    SegmentSize,
-    WriteBuffer,
-    WriteStaticBuffer,
-};
+use crate::actors::messages::{ExportSegment, FileExists, FileLen, ReadRange, RemoveFile, SegmentSize, WriteBuffer, WriteStaticBuffer};
 use crate::fragments::DiskFragments;
 
 pub struct AioDirectoryStreamWriter {
@@ -173,7 +165,12 @@ impl AioDirectoryStreamWriter {
         Ok(buffer)
     }
 
-    pub async fn writer_mut(&mut self) -> io::Result<&mut DmaStreamWriter> {
+    #[puppet]
+    async fn export_segment(&mut self, msg: ExportSegment) -> io::Result<()> {
+        Ok(())
+    }
+
+    async fn writer_mut(&mut self) -> io::Result<&mut DmaStreamWriter> {
         if self.file.is_none() {
             self.lazy_init().await?;
         }

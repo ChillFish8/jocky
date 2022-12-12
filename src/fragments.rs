@@ -16,6 +16,9 @@ pub struct DiskFragments {
 }
 
 impl DiskFragments {
+    /// Adds a fragment for a given file.
+    ///
+    /// If `overwrite` is true, all other fragments are removed.
     pub fn mark_fragment_location(
         &mut self,
         path: PathBuf,
@@ -29,14 +32,17 @@ impl DiskFragments {
         self.fragments.entry(path).or_default().push(location);
     }
 
+    /// Checks if any fragments exist for the given file.
     pub fn exists(&self, path: &Path) -> bool {
         self.fragments.contains_key(path)
     }
 
+    /// Removes all fragments of a given file.
     pub fn clear_fragments(&mut self, path: &Path) {
         self.fragments.remove(path);
     }
 
+    /// Calculates the given file's total storage on disk.
     pub fn file_size(&self, path: &Path) -> Option<usize> {
         self.fragments.get(path).map(|fragments: &Vec<Range<u64>>| {
             fragments
@@ -46,6 +52,8 @@ impl DiskFragments {
         })
     }
 
+    /// Calculates what fragments of file data are required
+    /// in order to read a given range of data as if it was a normal file on disk.
     pub fn get_selected_fragments(
         &self,
         path: &Path,

@@ -62,6 +62,12 @@ pub struct Finalise {
 }
 derive_message!(Finalise, io::Result<()>);
 
+/// De-fragments and exports the segment to a given file.
+pub struct ExportSegment {
+    pub file_path: PathBuf,
+}
+derive_message!(ExportSegment, io::Result<()>);
+
 /// Indexes a set of documents.
 pub struct IndexDocuments {
     pub docs: Vec<Document>,
