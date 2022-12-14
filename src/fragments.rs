@@ -42,6 +42,23 @@ impl DiskFragments {
         self.fragments.remove(path);
     }
 
+    pub fn inner(&self) -> &BTreeMap<PathBuf, Vec<Range<u64>>> {
+        &self.fragments
+    }
+
+    /// The total space taken up by valid fragments.
+    pub fn total_size(&self) -> usize {
+        let mut total = 0;
+
+        for ranges in self.fragments.values() {
+            for range in ranges {
+                total += (range.end - range.start) as usize;
+            }
+        }
+
+        total
+    }
+
     /// Calculates the given file's total storage on disk.
     pub fn file_size(&self, path: &Path) -> Option<usize> {
         self.fragments.get(path).map(|fragments: &Vec<Range<u64>>| {

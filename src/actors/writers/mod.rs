@@ -6,17 +6,10 @@ use std::sync::Arc;
 use glommio::Placement;
 use puppet::{ActorMailbox, DeferredResponse, Message};
 use tantivy::directory::error::DeleteError;
-use tantivy::directory::FileHandle;
+use tantivy::directory::{FileHandle, OwnedBytes};
 use tracing::warn;
 
-use crate::actors::messages::{
-    FileExists,
-    FileLen,
-    ReadRange,
-    RemoveFile,
-    WriteBuffer,
-    WriteStaticBuffer,
-};
+use crate::actors::messages::{ExportSegment, FileExists, FileLen, ReadRange, RemoveFile, WriteBuffer, WriteStaticBuffer};
 use crate::directory::FileReader;
 
 #[cfg(target_os = "linux")]
@@ -44,10 +37,12 @@ impl AutoWriterSelector {
     ) -> io::Result<Self> {
         #[cfg(target_os = "linux")]
         if check_uring_ok() {
+            warn!("Using AIO API");
             let aio_actor = aio::AioDirectoryStreamWriter::create(file_path, size_hint);
             return Ok(Self::Aio(aio_actor));
         }
 
+        warn!("Using blocking API");
         let blocking_actor =
             blocking::DirectoryStreamWriter::create(file_path, size_hint).await?;
         Ok(Self::Blocking(blocking_actor))
@@ -139,7 +134,7 @@ impl AutoWriterSelector {
         }
     }
 
-    pub fn read(&self, path: &Path, range: Range<usize>) -> io::Result<Vec<u8>> {
+    pub fn read(&self, path: &Path, range: Range<usize>) -> io::Result<OwnedBytes> {
         let msg = ReadRange {
             range,
             file_path: path.to_path_buf(),
@@ -150,14 +145,25 @@ impl AutoWriterSelector {
             AutoWriterSelector::Blocking(writer) => writer.send_sync(msg),
         }
     }
+
+    pub async fn export_to(&self, path: impl AsRef<Path>) -> io::Result<()> {
+        let msg = ExportSegment {
+            file_path: path.as_ref().to_path_buf()
+        };
+
+        match self {
+            AutoWriterSelector::Aio(writer) => writer.send(msg).await,
+            AutoWriterSelector::Blocking(writer) => writer.send(msg).await,
+        }
+    }
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(any(not(target_os = "linux"), feature = "disable-aio"))]
 fn check_uring_ok() -> bool {
     false
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(feature = "disable-aio")))]
 fn check_uring_ok() -> bool {
     glommio::LocalExecutorBuilder::new(Placement::Unbound)
         .spawn(|| async move {})
@@ -166,5 +172,5 @@ fn check_uring_ok() -> bool {
         .map_err(
             |e| warn!(error = ?e, "System was unable to use AIO writer due to error."),
         )
-        .is_err()
+        .is_ok()
 }

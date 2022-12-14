@@ -1,22 +1,48 @@
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+use std::fs::File;
 use std::io;
 use std::io::ErrorKind;
+use std::ops::{Deref, Range};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Duration;
+use bytes::Bytes;
 
 use futures_lite::{AsyncWriteExt, StreamExt};
-use glommio::io::{
-    DmaFile,
-    DmaStreamWriter,
-    DmaStreamWriterBuilder,
-    MergedBufferLimit,
-    ReadAmplificationLimit,
-};
+use glommio::io::{DmaFile, DmaStreamWriter, DmaStreamWriterBuilder, MergedBufferLimit, ReadAmplificationLimit, ReadResult};
 use glommio::Placement;
+use humansize::DECIMAL;
+use memmap2::Mmap;
+use moka::unsync::Cache;
 use puppet::{puppet_actor, Actor, ActorMailbox};
+use tantivy::directory::OwnedBytes;
+use tracing::warn;
 
 use crate::actors::messages::{ExportSegment, FileExists, FileLen, ReadRange, RemoveFile, SegmentSize, WriteBuffer, WriteStaticBuffer};
 use crate::fragments::DiskFragments;
+
+#[derive(Default, Debug)]
+struct Counters {
+    paths: BTreeMap<PathBuf, usize>,
+}
+
+impl Counters {
+    fn register(&mut self, path: &Path) {
+        let val = self.paths
+            .entry(path.to_path_buf())
+            .or_default();
+        (*val) += 1;
+    }
+}
+
+#[derive(Hash, Eq, PartialEq)]
+pub struct CacheKey {
+    file_path: PathBuf,
+    start: u64,
+    len: usize,
+}
 
 pub struct AioDirectoryStreamWriter {
     size_hint: u64,
@@ -24,6 +50,7 @@ pub struct AioDirectoryStreamWriter {
     file: Option<Rc<DmaFile>>,
     writer: Option<DmaStreamWriter>,
     fragments: DiskFragments,
+    counters: Counters,
 }
 
 #[puppet_actor]
@@ -43,6 +70,7 @@ impl AioDirectoryStreamWriter {
                     file: None,
                     writer: None,
                     fragments: Default::default(),
+                    counters: Counters::default(),
                 };
 
                 actor.run_actor(rx).await;
@@ -55,6 +83,7 @@ impl AioDirectoryStreamWriter {
 
     async fn lazy_init(&mut self) -> io::Result<()> {
         let file = DmaFile::create(self.path.as_path()).await?;
+        file.hint_extent_size(64 << 20).await?;
         file.pre_allocate(self.size_hint).await?;
         let writer = DmaStreamWriterBuilder::new(file)
             .with_buffer_size(512 << 10)
@@ -126,7 +155,9 @@ impl AioDirectoryStreamWriter {
     /// In the very nature of the writer, reads can be heavily fragmented so naturally this can
     /// lead to a reasonable high amount of random reads, although the reader API will try optimise
     /// it as best as it can.
-    async fn read_range(&mut self, msg: ReadRange) -> io::Result<Vec<u8>> {
+    async fn read_range(&mut self, msg: ReadRange) -> io::Result<OwnedBytes> {
+        self.counters.register(&msg.file_path);
+
         let mut buffer = Vec::with_capacity(msg.range.len());
 
         let selected_info = self
@@ -162,11 +193,56 @@ impl AioDirectoryStreamWriter {
         }
 
         buffer.truncate(msg.range.len());
-        Ok(buffer)
+        Ok(OwnedBytes::new(buffer))
     }
 
     #[puppet]
     async fn export_segment(&mut self, msg: ExportSegment) -> io::Result<()> {
+        // Ensure all data is safely on disk.
+        self.writer_mut().await?.sync().await?;
+
+        let total_size = self.fragments.total_size();
+
+        let writer = DmaFile::create(msg.file_path).await?;
+        writer.pre_allocate(total_size as u64).await?;
+        let mut writer = DmaStreamWriterBuilder::new(writer)
+            .with_buffer_size(512 << 10)
+            .with_write_behind(10)
+            .build();
+
+        let file = self.file.as_ref().ok_or_else(|| {
+            io::Error::new(
+                ErrorKind::Other,
+                "File has not be initialised, this is a bug.",
+            )
+        })?;
+
+        let locations = self.fragments
+            .inner()
+            .values()
+            .flatten()
+            .map(|range| {
+                (range.start, (range.end - range.start) as usize)
+            })
+            .collect::<Vec<_>>();
+
+        let chunk_size = locations.len() / self.fragments.inner().len();
+        for block in locations.chunks(chunk_size) {
+            let read_requests = futures_lite::stream::iter(block.to_vec());
+            let mut stream = file.read_many(
+                    read_requests,
+                    MergedBufferLimit::Custom(512 << 10),
+                    ReadAmplificationLimit::Custom(64 << 10),
+                );
+
+            while let Some(res) = stream.next().await {
+                let (_, data) = res?;
+                writer.write_all(&data).await?;
+            }
+        }
+
+        writer.sync().await?;
+
         Ok(())
     }
 

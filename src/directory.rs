@@ -145,6 +145,6 @@ impl HasLen for FileReader {
 impl FileHandle for FileReader {
     fn read_bytes(&self, range: Range<usize>) -> std::io::Result<OwnedBytes> {
         let buf = self.writer.read(&self.path, range)?;
-        Ok(OwnedBytes::new(buf))
+        Ok(buf)
     }
 }

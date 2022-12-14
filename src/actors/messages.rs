@@ -7,6 +7,7 @@ use puppet::derive_message;
 use rkyv::{Archive, Deserialize, Serialize};
 use tantivy::schema::Facet;
 use tantivy::{DateTime, Document};
+use tantivy::directory::OwnedBytes;
 
 /// Copy a file's content into the segment writer.
 pub struct WriteFile {
@@ -48,7 +49,7 @@ pub struct ReadRange {
     pub file_path: PathBuf,
     pub range: Range<usize>,
 }
-derive_message!(ReadRange, io::Result<Vec<u8>>);
+derive_message!(ReadRange, io::Result<OwnedBytes>);
 
 /// Reads a range of data from the file.
 pub struct FileLen {

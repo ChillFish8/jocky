@@ -3,16 +3,10 @@ use std::io::{self, BufWriter, ErrorKind, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use puppet::{puppet_actor, Actor, ActorMailbox};
+use tantivy::directory::OwnedBytes;
+use tracing::warn;
 
-use crate::actors::messages::{
-    FileExists,
-    FileLen,
-    ReadRange,
-    RemoveFile,
-    SegmentSize,
-    WriteBuffer,
-    WriteStaticBuffer,
-};
+use crate::actors::messages::{ExportSegment, FileExists, FileLen, ReadRange, RemoveFile, SegmentSize, WriteBuffer, WriteStaticBuffer};
 use crate::fragments::DiskFragments;
 
 const BUFFER_CAPACITY: usize = 512 << 10;
@@ -110,7 +104,7 @@ impl DirectoryStreamWriter {
     /// In the very nature of the writer, reads can be heavily fragmented so naturally this can
     /// lead to a reasonable high amount of random reads, although the reader API will try optimise
     /// it as best as it can.
-    async fn read_range(&mut self, msg: ReadRange) -> io::Result<Vec<u8>> {
+    async fn read_range(&mut self, msg: ReadRange) -> io::Result<OwnedBytes> {
         // Ensure the writer buffer is actually flushed.
         self.writer_mut()?.flush()?;
 
@@ -129,7 +123,40 @@ impl DirectoryStreamWriter {
         }
 
         buffer.truncate(msg.range.len());
-        Ok(buffer)
+        Ok(OwnedBytes::new(buffer))
+    }
+
+
+    #[puppet]
+    async fn export_segment(&mut self, msg: ExportSegment) -> io::Result<()> {
+        // Ensure all data is safely on disk.
+        self.writer_mut()?.flush()?;
+
+        let total_size = self.fragments.total_size();
+
+        let file = File::create(msg.file_path)?;
+        file.set_len(total_size as u64)?;
+        let mut writer = BufWriter::with_capacity(BUFFER_CAPACITY, file);
+
+        for (path, locations) in self.fragments.inner() {
+            let mut buffer = Vec::new();
+            for range in locations {
+                self.file.seek(SeekFrom::Start(range.start))?;
+
+                let mut temp_buffer = vec![0u8; (range.end - range.start) as usize].into_boxed_slice();
+                self.file.read_exact(&mut temp_buffer[..])?;
+                buffer.extend_from_slice(&temp_buffer);
+            }
+
+            writer.write_all(&buffer)?;
+        }
+
+        writer
+            .into_inner()
+            .map_err(|e| e.into_error())?
+            .sync_all()?;
+
+        Ok(())
     }
 
     pub fn writer_mut(&mut self) -> io::Result<&mut BufWriter<File>> {
