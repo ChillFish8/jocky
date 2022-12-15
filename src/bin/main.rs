@@ -17,7 +17,7 @@ use tracing::info;
 #[global_allocator]
 static ALLOCATOR: Cap<alloc::System> = Cap::new(alloc::System, usize::MAX);
 
-const NUM_PARTITIONS: usize = 100;
+const NUM_PARTITIONS: usize = 10;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -109,7 +109,7 @@ where
 
             let mut start = Instant::now();
             for (i, line) in lines.enumerate() {
-                if i >= 3_000_000 {
+                if i >= 10_000_000 {
                     break;
                 }
 
