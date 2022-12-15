@@ -10,21 +10,20 @@ use rkyv::{Archive, Deserialize, Serialize};
 
 pub const METADATA_HEADER_SIZE: usize = mem::size_of::<u64>() * 2;
 
-#[derive(Debug, Serialize, Deserialize, Archive)]
+#[repr(C)]
+#[derive(Debug, Default, Serialize, Deserialize, Archive)]
 #[archive_attr(derive(CheckBytes, Debug))]
 pub struct SegmentMetadata {
-    pub segment_id: HLCTimestamp,
-    pub indexes: BTreeSet<String>,
-    pub files: BTreeMap<String, Range<u64>>,
+    files: BTreeMap<String, Range<u64>>,
 }
 
 impl SegmentMetadata {
-    pub fn new(id: HLCTimestamp) -> Self {
-        Self {
-            segment_id: id,
-            indexes: BTreeSet::new(),
-            files: BTreeMap::new(),
-        }
+    pub fn add_file(&mut self, file: String, location: Range<u64>) {
+        self.files.insert(file, location);
+    }
+
+    pub fn get_location(&mut self, file: &str) -> Option<Range<u64>> {
+        self.files.get(file).cloned()
     }
 
     pub fn to_bytes(&self) -> io::Result<Vec<u8>> {

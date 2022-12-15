@@ -8,6 +8,7 @@ use tracing::warn;
 
 use crate::actors::messages::{ExportSegment, FileExists, FileLen, ReadRange, RemoveFile, SegmentSize, WriteBuffer, WriteStaticBuffer};
 use crate::fragments::DiskFragments;
+use crate::metadata::SegmentMetadata;
 
 const BUFFER_CAPACITY: usize = 512 << 10;
 
@@ -136,20 +137,39 @@ impl DirectoryStreamWriter {
 
         let file = File::create(msg.file_path)?;
         file.set_len(total_size as u64)?;
+
+        let mut current_pos: u64 = 0;
         let mut writer = BufWriter::with_capacity(BUFFER_CAPACITY, file);
 
+        let mut metadata = SegmentMetadata::default();
         for (path, locations) in self.fragments.inner() {
-            let mut buffer = Vec::new();
+            let start = current_pos;
+
+            let mut locations = locations.clone();
+            locations.sort_by_key(|range| range.start);
             for range in locations {
                 self.file.seek(SeekFrom::Start(range.start))?;
 
                 let mut temp_buffer = vec![0u8; (range.end - range.start) as usize].into_boxed_slice();
                 self.file.read_exact(&mut temp_buffer[..])?;
-                buffer.extend_from_slice(&temp_buffer);
+                writer.write_all(&temp_buffer)?;
+
+                current_pos += temp_buffer.len() as u64;
             }
 
-            writer.write_all(&buffer)?;
+            let path = path.to_string_lossy().to_string();
+            metadata.add_file(path, start..current_pos);
         }
+
+        // Serialize and write metadata.
+        let metadata = metadata.to_bytes()?;
+        let start = current_pos;
+        writer.write_all(&metadata).await?;
+
+        // Write metadata footer.
+        let mut buf = Vec::new();
+        crate::metadata::write_metadata_offsets(&mut buf, start, start + metadata.len() as u64)?;
+        writer.write_all(&metadata).await?;
 
         writer
             .into_inner()

@@ -109,7 +109,7 @@ where
 
             let mut start = Instant::now();
             for (i, line) in lines.enumerate() {
-                if i >= 10_000_000 {
+                if i >= 3_000_000 {
                     break;
                 }
 

@@ -22,6 +22,7 @@ use tracing::warn;
 
 use crate::actors::messages::{ExportSegment, FileExists, FileLen, ReadRange, RemoveFile, SegmentSize, WriteBuffer, WriteStaticBuffer};
 use crate::fragments::DiskFragments;
+use crate::metadata::SegmentMetadata;
 
 #[derive(Default, Debug)]
 struct Counters {
@@ -217,18 +218,13 @@ impl AioDirectoryStreamWriter {
             )
         })?;
 
-        let locations = self.fragments
-            .inner()
-            .values()
-            .flatten()
-            .map(|range| {
-                (range.start, (range.end - range.start) as usize)
-            })
-            .collect::<Vec<_>>();
+        let mut metadata = SegmentMetadata::default();
+        for (path, locations) in self.fragments.inner() {
+            let start = writer.current_pos();
 
-        let chunk_size = locations.len() / self.fragments.inner().len();
-        for block in locations.chunks(chunk_size) {
-            let read_requests = futures_lite::stream::iter(block.to_vec());
+            let block = locations.iter()
+                .map(|range| (range.start, (range.end - range.start) as usize));
+            let read_requests = futures_lite::stream::iter(block);
             let mut stream = file.read_many(
                     read_requests,
                     MergedBufferLimit::Custom(512 << 10),
@@ -239,9 +235,27 @@ impl AioDirectoryStreamWriter {
                 let (_, data) = res?;
                 writer.write_all(&data).await?;
             }
+
+            let path = path.to_string_lossy().to_string();
+            metadata.add_file(path, start..writer.current_pos());
         }
 
+        // Serialize and write metadata.
+        let metadata = metadata.to_bytes()?;
+        let start = writer.current_pos();
+        writer.write_all(&metadata).await?;
+
+        // Write metadata footer.
+        let mut buf = Vec::new();
+        crate::metadata::write_metadata_offsets(&mut buf, start, writer.current_pos())?;
+        writer.write_all(&metadata).await?;
+
+        // Flush writers.
         writer.sync().await?;
+
+        file.truncate(self.size_hint).await?;
+        self.lazy_init().await?;
+        self.fragments = DiskFragments::default();
 
         Ok(())
     }
