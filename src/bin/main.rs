@@ -11,24 +11,24 @@ use jocky::directory::LinearSegmentWriter;
 use parking_lot::RwLock;
 use tantivy::directory::{MmapDirectory, RamDirectory};
 use tantivy::schema::{Schema, STORED, TEXT};
-use tantivy::{doc, Directory, Index, IndexSettings};
+use tantivy::{doc, Directory, Index, IndexSettings, Document};
 use tracing::info;
 
 #[global_allocator]
 static ALLOCATOR: Cap<alloc::System> = Cap::new(alloc::System, usize::MAX);
 
-const NUM_PARTITIONS: usize = 10;
+const NUM_PARTITIONS: usize = 100;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let _ = tracing_subscriber::fmt::try_init();
 
-    //tokio::time::sleep(Duration::from_secs(16)).await;
+    tokio::time::sleep(Duration::from_secs(16)).await;
 
-    //info!("Starting stream");
-    //run_stream().await?;
+    info!("Starting stream");
+    run_stream().await?;
 
-    //tokio::time::sleep(Duration::from_secs(16)).await;
+    tokio::time::sleep(Duration::from_secs(16)).await;
     info!("Starting basic");
     run_basic().await?;
 
@@ -37,10 +37,11 @@ async fn main() -> anyhow::Result<()> {
 
 async fn run_basic(
 ) -> anyhow::Result<()> {
-    let dir = move |_id| async move {
-        //let path = format!("./test-data/{}-partition", id);
-        //std::fs::create_dir_all(&path).expect("create dir.");
-        RamDirectory::create()
+    let dir = move |id| async move {
+        let path = format!("./test-data/{}-partition", id);
+        std::fs::create_dir_all(&path).expect("create dir.");
+        MmapDirectory::open(path).expect("create mmap dir")
+        //RamDirectory::create()
     };
 
     index_data(dir, 40_000_000).await?;
@@ -108,11 +109,11 @@ where
 
             let mut start = Instant::now();
             for (i, line) in lines.enumerate() {
-                if i >= 10_000_000 {
+                if i >= 3_000_000 {
                     break;
                 }
 
-                if start.elapsed() >= Duration::from_secs(30) {
+                if start.elapsed() >= Duration::from_secs(5) {
                     index_writer.commit().expect("Commit docs");
                     start = Instant::now();
                 }
