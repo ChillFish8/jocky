@@ -7,9 +7,17 @@ use glommio::Placement;
 use puppet::{ActorMailbox, DeferredResponse, Message};
 use tantivy::directory::error::DeleteError;
 use tantivy::directory::{FileHandle, OwnedBytes};
-use tracing::warn;
+use tracing::{debug, warn};
 
-use crate::actors::messages::{ExportSegment, FileExists, FileLen, ReadRange, RemoveFile, WriteBuffer, WriteStaticBuffer};
+use crate::actors::messages::{
+    ExportSegment,
+    FileExists,
+    FileLen,
+    ReadRange,
+    RemoveFile,
+    WriteBuffer,
+    WriteStaticBuffer,
+};
 use crate::directory::FileReader;
 
 #[cfg(target_os = "linux")]
@@ -31,23 +39,28 @@ pub enum AutoWriterSelector {
 }
 
 impl AutoWriterSelector {
+    /// Creates a new directory writer.
+    ///
+    /// A size hint can be provided in order to pre-allocate a file of that size, this can be useful
+    /// in places where you know the rough or minimum size of the file.
     pub async fn create(
         file_path: impl AsRef<Path> + Send + 'static,
         size_hint: u64,
     ) -> io::Result<Self> {
         #[cfg(target_os = "linux")]
         if check_uring_ok() {
-            warn!("Using AIO API");
+            debug!("IO uring is available, creating backing writer.");
             let aio_actor = aio::AioDirectoryStreamWriter::create(file_path, size_hint);
             return Ok(Self::Aio(aio_actor));
         }
 
-        warn!("Using blocking API");
+        debug!("IO uring is not available on this machine of does not have the necessary environment to use it. Defaulting to blocking IO.");
         let blocking_actor =
             blocking::DirectoryStreamWriter::create(file_path, size_hint).await?;
         Ok(Self::Blocking(blocking_actor))
     }
 
+    /// Checks if a file exists in the writer.
     pub fn exists(&self, path: &Path) -> bool {
         let msg = FileExists {
             file_path: path.to_path_buf(),
@@ -59,6 +72,9 @@ impl AutoWriterSelector {
         }
     }
 
+    /// Creates a new file handle for a given path.
+    ///
+    /// This is just a handle to the writer itself rather than creating a new file.
     pub fn get_file_handle(&self, path: &Path) -> Option<Arc<dyn FileHandle>> {
         let msg = FileLen {
             file_path: path.to_path_buf(),
@@ -78,6 +94,10 @@ impl AutoWriterSelector {
         })
     }
 
+    /// Deletes a file from the writer.
+    ///
+    /// Due to the nature of this file being append-only, deletes simply
+    /// mark file data as not used rather than free the disk space.
     pub fn delete(&self, path: &Path) -> Result<(), DeleteError> {
         let msg = RemoveFile {
             file_path: path.to_path_buf(),
@@ -94,6 +114,10 @@ impl AutoWriterSelector {
         })
     }
 
+    /// Writes some data to the writer.
+    ///
+    /// This will overwrite any existing data associated with the file
+    /// if it already exists.
     pub fn atomic_write(&self, path: &Path, data: &[u8]) -> io::Result<()> {
         // SAFETY:
         // This is safe because we ensure that the buffer lives
@@ -113,6 +137,11 @@ impl AutoWriterSelector {
         }
     }
 
+    /// Appends some data to the writer for a given file.
+    ///
+    /// Writes occur asynchronously to prevent a stall when several writers
+    /// try contact and wait for the actor at once. Instead, a deferred response is
+    /// returned.
     pub fn write(
         &mut self,
         path: &Path,
@@ -134,6 +163,7 @@ impl AutoWriterSelector {
         }
     }
 
+    /// Reads a range of data from the given path.
     pub fn read(&self, path: &Path, range: Range<usize>) -> io::Result<OwnedBytes> {
         let msg = ReadRange {
             range,
@@ -146,9 +176,22 @@ impl AutoWriterSelector {
         }
     }
 
-    pub async fn export_to(&self, path: impl AsRef<Path>) -> io::Result<()> {
+    /// Exports all data written to this writer to a de-fragmented file with a given set of metadata
+    /// and hot cache (buffer accessed as part of the metadata).
+    ///
+    /// Unlike the file being actively written to, the data exported is contiguous on a per-file basis
+    /// rather than being heavily fragmented.
+    ///
+    /// NOTE:
+    /// *Once exported, the internal writer will reset it's position and being overwriting old data.*
+    pub async fn export_to(
+        &self,
+        path: impl AsRef<Path>,
+        hot_cache: Vec<u8>,
+    ) -> io::Result<()> {
         let msg = ExportSegment {
-            file_path: path.as_ref().to_path_buf()
+            file_path: path.as_ref().to_path_buf(),
+            hot_cache,
         };
 
         match self {

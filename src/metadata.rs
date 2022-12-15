@@ -1,11 +1,10 @@
 use std::array::TryFromSliceError;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::io::{ErrorKind, Write};
 use std::ops::Range;
 use std::{io, mem};
 
 use bytecheck::CheckBytes;
-use datacake_crdt::HLCTimestamp;
 use rkyv::{Archive, Deserialize, Serialize};
 
 pub const METADATA_HEADER_SIZE: usize = mem::size_of::<u64>() * 2;
@@ -15,9 +14,14 @@ pub const METADATA_HEADER_SIZE: usize = mem::size_of::<u64>() * 2;
 #[archive_attr(derive(CheckBytes, Debug))]
 pub struct SegmentMetadata {
     files: BTreeMap<String, Range<u64>>,
+    hot_cache: Vec<u8>,
 }
 
 impl SegmentMetadata {
+    pub fn with_hot_cache(&mut self, buf: Vec<u8>) {
+        self.hot_cache = buf;
+    }
+
     pub fn add_file(&mut self, file: String, location: Range<u64>) {
         self.files.insert(file, location);
     }

@@ -4,9 +4,17 @@ use std::path::Path;
 
 use puppet::{puppet_actor, Actor, ActorMailbox};
 use tantivy::directory::OwnedBytes;
-use tracing::warn;
 
-use crate::actors::messages::{ExportSegment, FileExists, FileLen, ReadRange, RemoveFile, SegmentSize, WriteBuffer, WriteStaticBuffer};
+use crate::actors::messages::{
+    ExportSegment,
+    FileExists,
+    FileLen,
+    ReadRange,
+    RemoveFile,
+    SegmentSize,
+    WriteBuffer,
+    WriteStaticBuffer,
+};
 use crate::fragments::DiskFragments;
 use crate::metadata::SegmentMetadata;
 
@@ -127,7 +135,6 @@ impl DirectoryStreamWriter {
         Ok(OwnedBytes::new(buffer))
     }
 
-
     #[puppet]
     async fn export_segment(&mut self, msg: ExportSegment) -> io::Result<()> {
         // Ensure all data is safely on disk.
@@ -142,6 +149,7 @@ impl DirectoryStreamWriter {
         let mut writer = BufWriter::with_capacity(BUFFER_CAPACITY, file);
 
         let mut metadata = SegmentMetadata::default();
+        metadata.with_hot_cache(msg.hot_cache);
         for (path, locations) in self.fragments.inner() {
             let start = current_pos;
 
@@ -150,7 +158,8 @@ impl DirectoryStreamWriter {
             for range in locations {
                 self.file.seek(SeekFrom::Start(range.start))?;
 
-                let mut temp_buffer = vec![0u8; (range.end - range.start) as usize].into_boxed_slice();
+                let mut temp_buffer =
+                    vec![0u8; (range.end - range.start) as usize].into_boxed_slice();
                 self.file.read_exact(&mut temp_buffer[..])?;
                 writer.write_all(&temp_buffer)?;
 
@@ -164,12 +173,16 @@ impl DirectoryStreamWriter {
         // Serialize and write metadata.
         let metadata = metadata.to_bytes()?;
         let start = current_pos;
-        writer.write_all(&metadata).await?;
+        writer.write_all(&metadata)?;
 
         // Write metadata footer.
         let mut buf = Vec::new();
-        crate::metadata::write_metadata_offsets(&mut buf, start, start + metadata.len() as u64)?;
-        writer.write_all(&metadata).await?;
+        crate::metadata::write_metadata_offsets(
+            &mut buf,
+            start,
+            start + metadata.len() as u64,
+        )?;
+        writer.write_all(&metadata)?;
 
         writer
             .into_inner()

@@ -5,9 +5,9 @@ use std::path::PathBuf;
 use bytecheck::CheckBytes;
 use puppet::derive_message;
 use rkyv::{Archive, Deserialize, Serialize};
+use tantivy::directory::OwnedBytes;
 use tantivy::schema::Facet;
 use tantivy::{DateTime, Document};
-use tantivy::directory::OwnedBytes;
 
 /// Copy a file's content into the segment writer.
 pub struct WriteFile {
@@ -66,6 +66,7 @@ derive_message!(Finalise, io::Result<()>);
 /// De-fragments and exports the segment to a given file.
 pub struct ExportSegment {
     pub file_path: PathBuf,
+    pub hot_cache: Vec<u8>,
 }
 derive_message!(ExportSegment, io::Result<()>);
 

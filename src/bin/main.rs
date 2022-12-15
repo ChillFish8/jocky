@@ -1,17 +1,17 @@
 use std::alloc;
 use std::future::Future;
+use std::io::BufRead;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use std::io::BufRead;
 
 use cap::Cap;
 use humantime::format_duration;
 use jocky::actors::writers::AutoWriterSelector;
 use jocky::directory::LinearSegmentWriter;
 use parking_lot::RwLock;
-use tantivy::directory::{MmapDirectory, RamDirectory};
+use tantivy::directory::MmapDirectory;
 use tantivy::schema::{Schema, STORED, TEXT};
-use tantivy::{doc, Directory, Index, IndexSettings, Document};
+use tantivy::{doc, Directory, Index, IndexSettings};
 use tracing::info;
 
 #[global_allocator]
@@ -35,8 +35,7 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn run_basic(
-) -> anyhow::Result<()> {
+async fn run_basic() -> anyhow::Result<()> {
     let dir = move |id| async move {
         let path = format!("./test-data/{}-partition", id);
         std::fs::create_dir_all(&path).expect("create dir.");
@@ -50,8 +49,7 @@ async fn run_basic(
     Ok(())
 }
 
-async fn run_stream(
-) -> anyhow::Result<()> {
+async fn run_stream() -> anyhow::Result<()> {
     let dir = move |id| async move {
         let path = format!("./test-data/singles/{}-partition.index", id);
         let mailbox = AutoWriterSelector::create(path, 2 << 30)
@@ -76,7 +74,7 @@ async fn index_data<D, F>(
 ) -> anyhow::Result<()>
 where
     D: Directory,
-    F: Future<Output = D>
+    F: Future<Output = D>,
 {
     let mut schema_builder = Schema::builder();
 
@@ -103,7 +101,8 @@ where
             .expect("Create index writer.");
 
         let task = tokio::task::spawn_blocking(move || {
-            let file = std::fs::File::open("../../datasets/amazon-reviews/data.json").expect("read file");
+            let file = std::fs::File::open("../../datasets/amazon-reviews/data.json")
+                .expect("read file");
             let reader = std::io::BufReader::with_capacity(512 << 10, file);
             let lines = reader.lines();
 
@@ -121,9 +120,11 @@ where
                 let doc: serde_json::Map<String, serde_json::Value> =
                     serde_json::from_str(&line.expect("get line")).expect("Parse");
 
-                index_writer.add_document(doc!(
-                    data => doc,
-                )).expect("Add doc.");
+                index_writer
+                    .add_document(doc!(
+                        data => doc,
+                    ))
+                    .expect("Add doc.");
             }
 
             index_writer.commit().expect("Commit documents.");

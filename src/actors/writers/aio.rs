@@ -1,26 +1,32 @@
-use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::fs::File;
 use std::io;
 use std::io::ErrorKind;
-use std::ops::{Deref, Range};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::Arc;
 use std::time::Duration;
-use bytes::Bytes;
 
 use futures_lite::{AsyncWriteExt, StreamExt};
-use glommio::io::{DmaFile, DmaStreamWriter, DmaStreamWriterBuilder, MergedBufferLimit, ReadAmplificationLimit, ReadResult};
+use glommio::io::{
+    DmaFile,
+    DmaStreamWriter,
+    DmaStreamWriterBuilder,
+    MergedBufferLimit,
+    ReadAmplificationLimit,
+};
 use glommio::Placement;
-use humansize::DECIMAL;
-use memmap2::Mmap;
-use moka::unsync::Cache;
 use puppet::{puppet_actor, Actor, ActorMailbox};
 use tantivy::directory::OwnedBytes;
-use tracing::warn;
 
-use crate::actors::messages::{ExportSegment, FileExists, FileLen, ReadRange, RemoveFile, SegmentSize, WriteBuffer, WriteStaticBuffer};
+use crate::actors::messages::{
+    ExportSegment,
+    FileExists,
+    FileLen,
+    ReadRange,
+    RemoveFile,
+    SegmentSize,
+    WriteBuffer,
+    WriteStaticBuffer,
+};
 use crate::fragments::DiskFragments;
 use crate::metadata::SegmentMetadata;
 
@@ -31,9 +37,7 @@ struct Counters {
 
 impl Counters {
     fn register(&mut self, path: &Path) {
-        let val = self.paths
-            .entry(path.to_path_buf())
-            .or_default();
+        let val = self.paths.entry(path.to_path_buf()).or_default();
         (*val) += 1;
     }
 }
@@ -219,17 +223,19 @@ impl AioDirectoryStreamWriter {
         })?;
 
         let mut metadata = SegmentMetadata::default();
+        metadata.with_hot_cache(msg.hot_cache);
         for (path, locations) in self.fragments.inner() {
             let start = writer.current_pos();
 
-            let block = locations.iter()
+            let block = locations
+                .iter()
                 .map(|range| (range.start, (range.end - range.start) as usize));
             let read_requests = futures_lite::stream::iter(block);
             let mut stream = file.read_many(
-                    read_requests,
-                    MergedBufferLimit::Custom(512 << 10),
-                    ReadAmplificationLimit::Custom(64 << 10),
-                );
+                read_requests,
+                MergedBufferLimit::Custom(512 << 10),
+                ReadAmplificationLimit::Custom(64 << 10),
+            );
 
             while let Some(res) = stream.next().await {
                 let (_, data) = res?;

@@ -19,6 +19,7 @@ use tantivy::directory::{
     WritePtr,
 };
 use tantivy::{Directory, HasLen};
+use tracing::error;
 
 use crate::actors::messages::WriteBuffer;
 use crate::actors::writers::AutoWriterSelector;
@@ -47,7 +48,10 @@ impl Directory for LinearSegmentWriter {
     }
 
     fn delete(&self, path: &Path) -> Result<(), DeleteError> {
-        self.writer.delete(path)
+        self.writer.delete(path).map_err(|e| {
+            error!(error = ?e, "Failed to delete file.");
+            e
+        })
     }
 
     fn exists(&self, path: &Path) -> Result<bool, OpenReadError> {
@@ -79,7 +83,10 @@ impl Directory for LinearSegmentWriter {
                 .insert(path.to_path_buf(), data.to_vec());
         }
 
-        self.writer.atomic_write(path, data)
+        self.writer.atomic_write(path, data).map_err(|e| {
+            error!(error = ?e, "Failed to atomic-write file.");
+            e
+        })
     }
 
     fn sync_directory(&self) -> std::io::Result<()> {
@@ -101,6 +108,7 @@ impl Write for MessageWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         if let Some(deferred) = self.deferred.as_mut().and_then(|d| d.try_recv()) {
             if let Err(e) = deferred {
+                error!(error = ?e, file_path = %self.path.display(), "Deferred response failed to write data for file");
                 return Err(e);
             }
         }
@@ -144,7 +152,10 @@ impl HasLen for FileReader {
 
 impl FileHandle for FileReader {
     fn read_bytes(&self, range: Range<usize>) -> std::io::Result<OwnedBytes> {
-        let buf = self.writer.read(&self.path, range)?;
+        let buf = self.writer.read(&self.path, range).map_err(|e| {
+            error!(error = ?e, "Failed to atomic-write file.");
+            e
+        })?;
         Ok(buf)
     }
 }
