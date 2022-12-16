@@ -3,11 +3,12 @@ use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
 
+#[cfg(target_os = "linux")]
 use glommio::Placement;
 use puppet::{ActorMailbox, DeferredResponse, Message};
 use tantivy::directory::error::DeleteError;
 use tantivy::directory::{FileHandle, OwnedBytes};
-use tracing::{debug, warn};
+use tracing::debug;
 
 use crate::actors::messages::{
     ExportSegment,
@@ -67,6 +68,7 @@ impl AutoWriterSelector {
         };
 
         match self {
+            #[cfg(target_os = "linux")]
             AutoWriterSelector::Aio(writer) => writer.send_sync(msg),
             AutoWriterSelector::Blocking(writer) => writer.send_sync(msg),
         }
@@ -81,6 +83,7 @@ impl AutoWriterSelector {
         };
 
         let res = match self {
+            #[cfg(target_os = "linux")]
             AutoWriterSelector::Aio(writer) => writer.send_sync(msg),
             AutoWriterSelector::Blocking(writer) => writer.send_sync(msg),
         };
@@ -104,6 +107,7 @@ impl AutoWriterSelector {
         };
 
         let res = match self {
+            #[cfg(target_os = "linux")]
             AutoWriterSelector::Aio(writer) => writer.send_sync(msg),
             AutoWriterSelector::Blocking(writer) => writer.send_sync(msg),
         };
@@ -132,6 +136,7 @@ impl AutoWriterSelector {
         };
 
         match self {
+            #[cfg(target_os = "linux")]
             AutoWriterSelector::Aio(writer) => writer.send_sync(msg),
             AutoWriterSelector::Blocking(writer) => writer.send_sync(msg),
         }
@@ -154,6 +159,7 @@ impl AutoWriterSelector {
         };
 
         match self {
+            #[cfg(target_os = "linux")]
             AutoWriterSelector::Aio(writer) => {
                 futures_lite::future::block_on(writer.deferred_send(msg))
             },
@@ -171,6 +177,7 @@ impl AutoWriterSelector {
         };
 
         match self {
+            #[cfg(target_os = "linux")]
             AutoWriterSelector::Aio(writer) => writer.send_sync(msg),
             AutoWriterSelector::Blocking(writer) => writer.send_sync(msg),
         }
@@ -195,13 +202,14 @@ impl AutoWriterSelector {
         };
 
         match self {
+            #[cfg(target_os = "linux")]
             AutoWriterSelector::Aio(writer) => writer.send(msg).await,
             AutoWriterSelector::Blocking(writer) => writer.send(msg).await,
         }
     }
 }
 
-#[cfg(any(not(target_os = "linux"), feature = "disable-aio"))]
+#[cfg(all(target_os = "linux", feature = "disable-aio"))]
 fn check_uring_ok() -> bool {
     false
 }

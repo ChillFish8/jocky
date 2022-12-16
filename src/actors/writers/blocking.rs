@@ -52,9 +52,11 @@ impl DirectoryStreamWriter {
         };
 
         let (tx, rx) = flume::bounded::<<Self as Actor>::Messages>(100);
-        std::thread::spawn(move || {
-            futures_lite::future::block_on(actor.run_actor(rx));
-        });
+        std::thread::Builder::new()
+            .name("blocking-worker".to_string())
+            .spawn(move || {
+                futures_lite::future::block_on(actor.run_actor(rx));
+            }).expect("Spawn thread");
 
         let name = std::borrow::Cow::Owned("BlockingDirectoryWriter".to_string());
         Ok(ActorMailbox::new(tx, name))

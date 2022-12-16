@@ -24,7 +24,7 @@ humansize = "2.1.2"
 puppet = { version = "0.4.0", default-features = false }
 tokio = { version = "1", features = ["full"] }
 rkyv = { version = "0.7.39", features = ["validation"] }
-tantivy = { git = "https://github.com/ChillFish8/tantivy.git", branch = "main" }
+tantivy = { git = "https://github.com/ChillFish8/tantivy.git", branch = "main", features = ["quickwit"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 glommio = "0.7.0"

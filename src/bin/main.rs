@@ -17,7 +17,7 @@ use tracing::info;
 #[global_allocator]
 static ALLOCATOR: Cap<alloc::System> = Cap::new(alloc::System, usize::MAX);
 
-const NUM_PARTITIONS: usize = 10;
+const NUM_PARTITIONS: usize = 1;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -28,16 +28,16 @@ async fn main() -> anyhow::Result<()> {
     info!("Starting stream");
     run_stream().await?;
 
-    tokio::time::sleep(Duration::from_secs(16)).await;
-    info!("Starting basic");
-    run_basic().await?;
+    //tokio::time::sleep(Duration::from_secs(16)).await;
+    //info!("Starting basic");
+    //run_basic().await?;
 
     Ok(())
 }
 
 async fn run_basic() -> anyhow::Result<()> {
     let dir = move |id| async move {
-        let path = format!("./test-data/{}-partition", id);
+        let path = format!("./test-data/chunky/{}-partition", id);
         std::fs::create_dir_all(&path).expect("create dir.");
         MmapDirectory::open(path).expect("create mmap dir")
         //RamDirectory::create()
@@ -52,7 +52,7 @@ async fn run_basic() -> anyhow::Result<()> {
 async fn run_stream() -> anyhow::Result<()> {
     let dir = move |id| async move {
         let path = format!("./test-data/singles/{}-partition.index", id);
-        let mailbox = AutoWriterSelector::create(path, 2 << 30)
+        let mailbox = AutoWriterSelector::create(path, 512 << 20)
             .await
             .expect("Create selector");
         LinearSegmentWriter {
@@ -101,14 +101,14 @@ where
             .expect("Create index writer.");
 
         let task = tokio::task::spawn_blocking(move || {
-            let file = std::fs::File::open("../../datasets/amazon-reviews/data.json")
+            let file = std::fs::File::open("./datasets/data.json")
                 .expect("read file");
             let reader = std::io::BufReader::with_capacity(512 << 10, file);
             let lines = reader.lines();
 
             let mut start = Instant::now();
             for (i, line) in lines.enumerate() {
-                if i >= 3_000_000 {
+                if i >= 10_000_000 {
                     break;
                 }
 
