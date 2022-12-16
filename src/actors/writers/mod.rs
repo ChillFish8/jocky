@@ -221,7 +221,7 @@ fn check_uring_ok() -> bool {
         .expect("Spawn worker thread.")
         .join()
         .map_err(
-            |e| warn!(error = ?e, "System was unable to use AIO writer due to error."),
+            |e| tracing::warn!(error = ?e, "System was unable to use AIO writer due to error."),
         )
         .is_ok()
 }

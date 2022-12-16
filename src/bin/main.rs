@@ -18,7 +18,7 @@ use tracing::info;
 #[global_allocator]
 static ALLOCATOR: Cap<alloc::System> = Cap::new(alloc::System, usize::MAX);
 
-const NUM_PARTITIONS: usize = 100;
+const NUM_PARTITIONS: usize = 50;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -55,13 +55,13 @@ async fn run_basic() -> anyhow::Result<()> {
 }
 
 async fn run_stream() -> anyhow::Result<()> {
-    let path = "./test-data/singles/partitions-data.index";
-    let mailbox = AutoWriterSelector::create(path, 512 << 20)
-        .await
-        .expect("Create selector");
     let dir = move |id: usize| {
-        let mailbox = mailbox.clone();
         async move {
+            let path = format!("./test-data/singles/{}-data.index", id);
+            let mailbox = AutoWriterSelector::create(path, 512 << 20)
+                .await
+                .expect("Create selector");
+
             LinearSegmentWriter {
                 prefix: Path::new("partition").join(id.to_string()),
                 writer: mailbox,
@@ -110,7 +110,7 @@ where
             .expect("Create index writer.");
 
         let task = tokio::task::spawn_blocking(move || {
-            let file = std::fs::File::open("./datasets/data.json")
+            let file = std::fs::File::open("../../datasets/amazon-reviews/data.json")
                 .expect("read file");
             let reader = std::io::BufReader::with_capacity(512 << 10, file);
             let lines = reader.lines();
