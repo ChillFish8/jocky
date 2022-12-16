@@ -26,9 +26,16 @@ use crate::actors::writers::AutoWriterSelector;
 
 #[derive(Clone)]
 pub struct LinearSegmentWriter {
+    pub prefix: PathBuf,
     pub writer: AutoWriterSelector,
     pub watches: Arc<WatchCallbackList>,
     pub atomic_files: Arc<RwLock<BTreeMap<PathBuf, Vec<u8>>>>,
+}
+
+impl LinearSegmentWriter {
+    fn with_prefix(&self, path: impl AsRef<Path>) -> PathBuf {
+        self.prefix.join(path)
+    }
 }
 
 impl Debug for LinearSegmentWriter {
@@ -43,12 +50,12 @@ impl Directory for LinearSegmentWriter {
         path: &Path,
     ) -> Result<Arc<dyn FileHandle>, OpenReadError> {
         self.writer
-            .get_file_handle(path)
+            .get_file_handle(&self.with_prefix(path))
             .ok_or_else(|| OpenReadError::FileDoesNotExist(path.to_path_buf()))
     }
 
     fn delete(&self, path: &Path) -> Result<(), DeleteError> {
-        self.writer.delete(path).map_err(|e| {
+        self.writer.delete(&self.with_prefix(path)).map_err(|e| {
             error!(error = ?e, "Failed to delete file.");
             e
         })
@@ -61,7 +68,7 @@ impl Directory for LinearSegmentWriter {
     fn open_write(&self, path: &Path) -> Result<WritePtr, OpenWriteError> {
         let writer = MessageWriter {
             writer: self.writer.clone(),
-            path: path.to_path_buf(),
+            path: self.with_prefix(path),
             deferred: None,
         };
 
@@ -71,19 +78,20 @@ impl Directory for LinearSegmentWriter {
     fn atomic_read(&self, path: &Path) -> Result<Vec<u8>, OpenReadError> {
         self.atomic_files
             .read()
-            .get(path)
+            .get(&self.with_prefix(path))
             .cloned()
             .ok_or_else(|| OpenReadError::FileDoesNotExist(path.to_path_buf()))
     }
 
     fn atomic_write(&self, path: &Path, data: &[u8]) -> std::io::Result<()> {
+        let path = self.with_prefix(path);
         {
             self.atomic_files
                 .write()
-                .insert(path.to_path_buf(), data.to_vec());
+                .insert(path.clone(), data.to_vec());
         }
 
-        self.writer.atomic_write(path, data).map_err(|e| {
+        self.writer.atomic_write(&path, data).map_err(|e| {
             error!(error = ?e, "Failed to atomic-write file.");
             e
         })
@@ -106,11 +114,9 @@ pub struct MessageWriter {
 
 impl Write for MessageWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        if let Some(deferred) = self.deferred.as_mut().and_then(|d| d.try_recv()) {
-            if let Err(e) = deferred {
-                error!(error = ?e, file_path = %self.path.display(), "Deferred response failed to write data for file");
-                return Err(e);
-            }
+        if let Some(Err(e)) = self.deferred.as_mut().and_then(|d| d.try_recv()) {
+            error!(error = ?e, file_path = %self.path.display(), "Deferred response failed to write data for file");
+            return Err(e);
         }
 
         let n = buf.len();

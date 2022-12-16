@@ -1,6 +1,7 @@
 use std::alloc;
 use std::future::Future;
 use std::io::BufRead;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -17,10 +18,14 @@ use tracing::info;
 #[global_allocator]
 static ALLOCATOR: Cap<alloc::System> = Cap::new(alloc::System, usize::MAX);
 
-const NUM_PARTITIONS: usize = 1;
+const NUM_PARTITIONS: usize = 100;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    if std::env::var("RUST_LOG").is_err(){
+        std::env::set_var("RUST_LOG", "warn");
+    }
+
     let _ = tracing_subscriber::fmt::try_init();
 
     tokio::time::sleep(Duration::from_secs(16)).await;
@@ -28,9 +33,9 @@ async fn main() -> anyhow::Result<()> {
     info!("Starting stream");
     run_stream().await?;
 
-    //tokio::time::sleep(Duration::from_secs(16)).await;
-    //info!("Starting basic");
-    //run_basic().await?;
+    tokio::time::sleep(Duration::from_secs(16)).await;
+    info!("Starting basic");
+    run_basic().await?;
 
     Ok(())
 }
@@ -43,22 +48,26 @@ async fn run_basic() -> anyhow::Result<()> {
         //RamDirectory::create()
     };
 
-    index_data(dir, 40_000_000).await?;
+    index_data(dir, 80_000_000).await?;
     println!("Basic ^^^");
 
     Ok(())
 }
 
 async fn run_stream() -> anyhow::Result<()> {
-    let dir = move |id| async move {
-        let path = format!("./test-data/singles/{}-partition.index", id);
-        let mailbox = AutoWriterSelector::create(path, 512 << 20)
-            .await
-            .expect("Create selector");
-        LinearSegmentWriter {
-            writer: mailbox.clone(),
-            watches: Arc::new(Default::default()),
-            atomic_files: Arc::new(RwLock::default()),
+    let path = "./test-data/singles/partitions-data.index";
+    let mailbox = AutoWriterSelector::create(path, 512 << 20)
+        .await
+        .expect("Create selector");
+    let dir = move |id: usize| {
+        let mailbox = mailbox.clone();
+        async move {
+            LinearSegmentWriter {
+                prefix: Path::new("partition").join(id.to_string()),
+                writer: mailbox,
+                watches: Arc::new(Default::default()),
+                atomic_files: Arc::new(RwLock::default()),
+            }
         }
     };
 
@@ -108,11 +117,11 @@ where
 
             let mut start = Instant::now();
             for (i, line) in lines.enumerate() {
-                if i >= 10_000_000 {
+                if i >= 3_000_000 {
                     break;
                 }
 
-                if start.elapsed() >= Duration::from_secs(5) {
+                if start.elapsed() >= Duration::from_secs(30) {
                     index_writer.commit().expect("Commit docs");
                     start = Instant::now();
                 }
