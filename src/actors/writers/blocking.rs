@@ -1,9 +1,10 @@
 use std::fs::File;
-use std::io::{self, BufWriter, ErrorKind, Read, Seek, SeekFrom, Write};
-use std::path::Path;
+use std::io::{self, BufWriter, ErrorKind, Write};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use memmap2::Mmap;
 
 use puppet::{puppet_actor, Actor, ActorMailbox};
-use tantivy::directory::OwnedBytes;
 
 use crate::actors::messages::{
     ExportSegment,
@@ -15,14 +16,16 @@ use crate::actors::messages::{
     WriteBuffer,
     WriteStaticBuffer,
 };
-use crate::fragments::DiskFragments;
+use crate::fragments::{DiskFragments, SelectedFragments};
 use crate::metadata::SegmentMetadata;
 
 const BUFFER_CAPACITY: usize = 512 << 10;
 
 pub struct DirectoryStreamWriter {
-    file: File,
+    path: PathBuf,
+    file: Arc<Mmap>,
     current_pos: usize,
+    flushed_pos: usize,
     writer: Option<BufWriter<File>>,
     fragments: DiskFragments,
 }
@@ -37,16 +40,20 @@ impl DirectoryStreamWriter {
         let (writer, file) = tokio::task::spawn_blocking(move || {
             let writer = File::create(&path)?;
             writer.set_len(size_hint)?;
-            let reader = File::open(&path)?;
 
-            Ok::<_, io::Error>((writer, reader))
+            let file = File::open(&path)?;
+            let mmap = unsafe { Mmap::map(&file)?  };
+
+            Ok::<_, io::Error>((writer, Arc::new(mmap)))
         })
         .await
         .expect("Spawn blocking")?;
 
         let actor = Self {
+            path: file_path.as_ref().to_path_buf(),
             file,
             current_pos: 0,
+            flushed_pos: 0,
             writer: Some(BufWriter::with_capacity(BUFFER_CAPACITY, writer)),
             fragments: DiskFragments::default(),
         };
@@ -60,6 +67,13 @@ impl DirectoryStreamWriter {
 
         let name = std::borrow::Cow::Owned("BlockingDirectoryWriter".to_string());
         Ok(ActorMailbox::new(tx, name))
+    }
+
+    fn reload_reader(&mut self) -> io::Result<()> {
+        let file = File::open(self.path.as_path())?;
+        let mmap = unsafe { Mmap::map(&file)?  };
+        self.file = Arc::new(mmap);
+        Ok(())
     }
 
     #[puppet]
@@ -115,26 +129,19 @@ impl DirectoryStreamWriter {
     /// In the very nature of the writer, reads can be heavily fragmented so naturally this can
     /// lead to a reasonable high amount of random reads, although the reader API will try optimise
     /// it as best as it can.
-    async fn read_range(&mut self, msg: ReadRange) -> io::Result<OwnedBytes> {
-        // Ensure the writer buffer is actually flushed.
-        self.writer_mut()?.flush()?;
-
-        let mut buffer = Vec::with_capacity(msg.range.len());
-
+    async fn read_range(&mut self, msg: ReadRange) -> io::Result<(Arc<Mmap>, SelectedFragments)> {
         let selected_info = self
             .fragments
             .get_selected_fragments(&msg.file_path, msg.range.clone())?;
 
-        for (seek_to, len) in selected_info.fragments {
-            self.file.seek(SeekFrom::Start(seek_to))?;
-
-            let mut intermediate = vec![0u8; len as usize].into_boxed_slice();
-            self.file.read_exact(&mut intermediate[..])?;
-            buffer.extend_from_slice(&intermediate);
+        if selected_info.minimum_flushed_pos > self.flushed_pos as u64 {
+            // Ensure the writer buffer is actually flushed.
+            self.writer_mut()?.flush()?;
+            self.reload_reader()?;
+            self.flushed_pos = self.current_pos;
         }
 
-        buffer.truncate(msg.range.len());
-        Ok(OwnedBytes::new(buffer))
+        Ok((self.file.clone(), selected_info))
     }
 
     #[puppet]
@@ -158,14 +165,11 @@ impl DirectoryStreamWriter {
             let mut locations = locations.clone();
             locations.sort_by_key(|range| range.start);
             for range in locations {
-                self.file.seek(SeekFrom::Start(range.start))?;
+                let range = range.start as usize..range.end as usize;
+                let file_len = range.len();
+                writer.write_all(&self.file[range])?;
 
-                let mut temp_buffer =
-                    vec![0u8; (range.end - range.start) as usize].into_boxed_slice();
-                self.file.read_exact(&mut temp_buffer[..])?;
-                writer.write_all(&temp_buffer)?;
-
-                current_pos += temp_buffer.len() as u64;
+                current_pos += file_len as u64;
             }
 
             let path = path.to_string_lossy().to_string();

@@ -2,12 +2,13 @@ use std::io;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
+use memmap2::Mmap;
 
 #[cfg(target_os = "linux")]
 use glommio::Placement;
 use puppet::{ActorMailbox, DeferredResponse, Message};
 use tantivy::directory::error::DeleteError;
-use tantivy::directory::{FileHandle, OwnedBytes};
+use tantivy::directory::FileHandle;
 use tracing::debug;
 
 use crate::actors::messages::{
@@ -20,6 +21,7 @@ use crate::actors::messages::{
     WriteStaticBuffer,
 };
 use crate::directory::FileReader;
+use crate::fragments::SelectedFragments;
 
 #[cfg(target_os = "linux")]
 pub mod aio;
@@ -170,7 +172,7 @@ impl AutoWriterSelector {
     }
 
     /// Reads a range of data from the given path.
-    pub fn read(&self, path: &Path, range: Range<usize>) -> io::Result<OwnedBytes> {
+    pub fn read(&self, path: &Path, range: Range<usize>) -> io::Result<(Arc<Mmap>, SelectedFragments)> {
         let msg = ReadRange {
             range,
             file_path: path.to_path_buf(),

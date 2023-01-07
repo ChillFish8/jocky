@@ -158,10 +158,27 @@ impl HasLen for FileReader {
 
 impl FileHandle for FileReader {
     fn read_bytes(&self, range: Range<usize>) -> std::io::Result<OwnedBytes> {
-        let buf = self.writer.read(&self.path, range).map_err(|e| {
+        let file_len = range.len();
+        let (file, selected) = self.writer.read(&self.path, range).map_err(|e| {
             error!(error = ?e, "Failed to atomic-write file.");
             e
         })?;
-        Ok(buf)
+
+        let mut buffer = Vec::with_capacity(file_len);
+        for (start, mut len) in selected.fragments {
+            if buffer.len() + len >= file_len {
+                len = file_len - buffer.len();
+            }
+
+            let start = start as usize;
+            buffer.extend_from_slice(&file[start..start + len]);
+
+            if buffer.len() >= file_len {
+                break;
+            }
+        }
+
+        buffer.truncate(file_len);
+        Ok(OwnedBytes::new(buffer))
     }
 }

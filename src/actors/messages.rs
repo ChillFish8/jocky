@@ -5,9 +5,11 @@ use std::path::PathBuf;
 use bytecheck::CheckBytes;
 use puppet::derive_message;
 use rkyv::{Archive, Deserialize, Serialize};
-use tantivy::directory::OwnedBytes;
 use tantivy::schema::Facet;
 use tantivy::{DateTime, Document};
+use crate::fragments::SelectedFragments;
+use memmap2::Mmap;
+use std::sync::Arc;
 
 /// Copy a file's content into the segment writer.
 pub struct WriteFile {
@@ -49,7 +51,7 @@ pub struct ReadRange {
     pub file_path: PathBuf,
     pub range: Range<usize>,
 }
-derive_message!(ReadRange, io::Result<OwnedBytes>);
+derive_message!(ReadRange, io::Result<(Arc<Mmap>, SelectedFragments)>);
 
 /// Reads a range of data from the file.
 pub struct FileLen {

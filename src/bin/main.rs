@@ -1,4 +1,3 @@
-use std::alloc;
 use std::future::Future;
 use std::io::BufRead;
 use std::path::Path;
@@ -6,6 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use cap::Cap;
+use mimalloc::MiMalloc;
 use humantime::format_duration;
 use jocky::actors::writers::AutoWriterSelector;
 use jocky::directory::LinearSegmentWriter;
@@ -16,9 +16,9 @@ use tantivy::{doc, Directory, Index, IndexSettings};
 use tracing::info;
 
 #[global_allocator]
-static ALLOCATOR: Cap<alloc::System> = Cap::new(alloc::System, usize::MAX);
+static ALLOCATOR: Cap<MiMalloc> = Cap::new(MiMalloc, usize::MAX);
 
-const NUM_PARTITIONS: usize = 50;
+const NUM_PARTITIONS: usize = 1;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -30,12 +30,14 @@ async fn main() -> anyhow::Result<()> {
 
     tokio::time::sleep(Duration::from_secs(16)).await;
 
-    info!("Starting stream");
-    run_stream().await?;
+    for _ in 0..3 {
+        info!("Starting stream");
+        run_stream().await?;
 
-    tokio::time::sleep(Duration::from_secs(16)).await;
-    info!("Starting basic");
-    run_basic().await?;
+        tokio::time::sleep(Duration::from_secs(16)).await;
+        info!("Starting basic");
+        run_basic().await?;
+    }
 
     Ok(())
 }
@@ -110,14 +112,14 @@ where
             .expect("Create index writer.");
 
         let task = tokio::task::spawn_blocking(move || {
-            let file = std::fs::File::open("../../datasets/amazon-reviews/data.json")
+            let file = std::fs::File::open("../datasets/data.json")
                 .expect("read file");
             let reader = std::io::BufReader::with_capacity(512 << 10, file);
             let lines = reader.lines();
 
             let mut start = Instant::now();
             for (i, line) in lines.enumerate() {
-                if i >= 3_000_000 {
+                if i >= 20_000_000 {
                     break;
                 }
 
@@ -137,6 +139,7 @@ where
             }
 
             index_writer.commit().expect("Commit documents.");
+            index_writer.wait_merging_threads().expect("wait");
         });
 
         tasks.push(task);
