@@ -16,7 +16,6 @@ pub struct RawDocument {
     pub value: BTreeMap<String, TopLevelValue>,
 }
 
-
 #[repr(C)]
 #[derive(Debug, Serialize, Deserialize, Archive, serde::Deserialize)]
 #[serde(untagged)]
@@ -46,61 +45,6 @@ pub enum TopLevelValue {
     MultiBytes(Vec<Vec<u8>>),
     /// A set of dynamic `JSON` object.
     MultiJson(Vec<BTreeMap<String, JsonValue>>),
-}
-
-impl TopLevelValue {
-    /// Computes the primary key hash of the given value.
-    ///
-    /// It is not recommended to use nested values as the primary key as it can lead
-    /// to excess work being done.
-    ///
-    /// JSON values are also **not** supported.
-    pub fn as_primary_key(&self) -> [u8; 32] {
-        match self {
-            TopLevelValue::U64(v) => blake3::hash(&v.to_be_bytes()),
-            TopLevelValue::I64(v) => blake3::hash(&v.to_be_bytes()),
-            TopLevelValue::F64(v) => blake3::hash(&v.to_be_bytes()),
-            TopLevelValue::String(v) => blake3::hash(v.as_bytes()),
-            TopLevelValue::Bytes(v) => blake3::hash(v),
-            TopLevelValue::MultiU64(v) => {
-                let mut hasher = blake3::Hasher::new();
-                for value in v {
-                    hasher.update(&value.to_be_bytes());
-                }
-                hasher.finalize()
-            },
-            TopLevelValue::MultiI64(v) => {
-                let mut hasher = blake3::Hasher::new();
-                for value in v {
-                    hasher.update(&value.to_be_bytes());
-                }
-                hasher.finalize()
-            },
-            TopLevelValue::MultiF64(v) => {
-                let mut hasher = blake3::Hasher::new();
-                for value in v {
-                    hasher.update(&value.to_be_bytes());
-                }
-                hasher.finalize()
-            },
-            TopLevelValue::MultiString(v) => {
-                let mut hasher = blake3::Hasher::new();
-                for value in v {
-                    hasher.update(value.as_bytes());
-                }
-                hasher.finalize()
-            },
-            TopLevelValue::MultiBytes(v) => {
-                let mut hasher = blake3::Hasher::new();
-                for value in v {
-                    hasher.update(value);
-                }
-                hasher.finalize()
-            },
-            TopLevelValue::Json(_) => unimplemented!("Primary key does not support JSON"),
-            TopLevelValue::MultiJson(_) => unimplemented!("Primary key does not support JSON"),
-        }.into()
-    }
 }
 
 #[repr(C)]

@@ -6,27 +6,44 @@ def divide_chunks(l, n):
     for i in range(0, len(l), n):
         yield l[i:i + n]
 
-with open("../datasets/data.json", mode="rb") as file:
-    raw = file.read()
-    samples = [sample for sample in divide_chunks(raw, 5 << 10)]
+with open("../datasets/data.json", encoding="utf-8") as file:
+    samples = [line.encode() for line in file]
 
 data = open("../datasets/data.json", mode="rb").read()
 
-dict_data = zstandard.train_dictionary(25 << 20, samples[:50], level=3, notifications=3)
-compressor = zstandard.ZstdCompressor(level=3, dict_data=dict_data)
-decompressor = zstandard.ZstdDecompressor(dict_data=dict_data)
+start = time.perf_counter()
+total = 0
+block_size = 0
+count = 0
+for chunk in divide_chunks(samples, 6_000):
+    chunk = b"\n".join(chunk)
+    block_size += len(chunk)
+    count += 1
+    total += len(zstandard.compress(chunk, level=1))
+stop = time.perf_counter() - start
+print(f"Took: {stop}s {total}B Avg Block Size: {block_size / count:.2f}B")
 
 start = time.perf_counter()
-for chunk in divide_chunks(data, 512 << 10):
-    block = compressor.compress(chunk)
-    decompressor.decompress(block)
+total = 0
+block_size = 0
+count = 0
+for chunk in divide_chunks(samples, 6_000):
+    chunk = b"\n".join(chunk)
+    block_size += len(chunk)
+    count += 1
+    total += len(zstandard.compress(chunk, level=3))
 stop = time.perf_counter() - start
-print(f"Took: {stop}s")
+print(f"Took: {stop}s {total}B Avg Block Size: {block_size / count:.2f}B")
 
 start = time.perf_counter()
-for chunk in divide_chunks(data, 512 << 10):
-    block = zstandard.compress(chunk, level=3)
-    zstandard.decompress(block)
+total = 0
+block_size = 0
+count = 0
+for chunk in divide_chunks(samples, 6_000):
+    chunk = b"\n".join(chunk)
+    block_size += len(chunk)
+    count += 1
+    total += len(zstandard.compress(chunk, level=-3))
 stop = time.perf_counter() - start
-print(f"Took: {stop}s")
+print(f"Took: {stop}s {total}B Avg Block Size: {block_size / count:.2f}B")
 
