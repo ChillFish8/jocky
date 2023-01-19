@@ -1,9 +1,10 @@
 use std::{io, mem};
 use std::io::ErrorKind;
+
 use puppet::{ActorMailbox, derive_message, puppet_actor};
+
 use crate::doc_block::Flush;
 use crate::doc_block::writer::{BlockWriter, WriteBlock};
-use crate::document::RawDocument;
 
 /// The compressed block size of a set of documents.
 ///
@@ -22,57 +23,4 @@ pub const BLOCK_SIZE: usize = 512 << 10;
 /// This was selected by comparing the various levels for
 /// performance vs compression ratio on sample data, and this
 /// proved to be the most effective with the given block size.
-pub const COMPRESSION_LEVEL: usize = 1;
-
-
-pub struct BlockProcessor {
-    temp_buffer: Vec<u8>,
-    writer: ActorMailbox<BlockWriter>,
-}
-
-#[puppet_actor]
-impl BlockProcessor {
-    pub fn new(writer: ActorMailbox<BlockWriter>) -> Self {
-        Self {
-            temp_buffer: vec![0; BLOCK_SIZE],
-            writer,
-        }
-    }
-
-    #[puppet]
-    async fn compress_entry(&mut self, msg: CompressDocs) -> io::Result<()> {
-        let start = self.temp_buffer.len();
-        for doc in msg.0 {
-            match rkyv::to_bytes::<_, 4096>(&doc) {
-                Ok(bytes) => {
-                    self.temp_buffer.extend_from_slice(&bytes);
-                },
-                Err(e) => {
-                    self.temp_buffer.truncate(start);
-                    return Err(io::Error::new(ErrorKind::Other, e.to_string()));
-                }
-            };
-        }
-
-        if self.temp_buffer.len() < BLOCK_SIZE {
-            return Ok(())
-        }
-
-        self.writer
-            .send(WriteBlock(mem::take(&mut self.temp_buffer)))
-            .await?;
-
-        Ok(())
-    }
-
-    #[puppet]
-    async fn flush(&mut self, msg: Flush) -> io::Result<()> {
-        self.writer
-            .send(WriteBlock(mem::take(&mut self.temp_buffer)))
-            .await?;
-        self.writer.send(msg).await
-    }
-}
-
-pub struct CompressDocs(pub Vec<RawDocument>);
-derive_message!(CompressDocs, io::Result<()>);
+pub const COMPRESSION_LEVEL: i32 = 1;
