@@ -1,6 +1,47 @@
+use std::collections::BTreeMap;
+use std::mem;
+use datacake_crdt::HLCTimestamp;
 use serde_json::{Map, Value};
 
 use crate::doc_block::ValueType;
+
+
+/// A document that allows for zero-copy string deserialization via serde
+/// while maintaining an owned value.
+///
+/// This essentially is just a wrapper struct holding onto the raw reference data
+/// and the deserialized view of the data.
+pub struct ReferencingDoc {
+    raw: String,
+    pub(crate) ts: HLCTimestamp,
+    values: BTreeMap<&'static str, DocValue<'static>>
+}
+
+impl ReferencingDoc {
+    /// Creates a new document using reference data to the raw string.
+    pub fn new(raw: String, ts: HLCTimestamp) -> Result<Self, serde_json::Error> {
+        let s_ref = unsafe { mem::transmute::<_, &'static str>(raw.as_str()) };
+        let values = serde_json::from_str(s_ref)?;
+        Ok(Self {
+            raw,
+            ts,
+            values,
+        })
+    }
+
+    #[inline]
+    /// Get a reference to the inner doc data.
+    pub fn as_values(&self) -> &BTreeMap<&str, DocValue> {
+        &self.values
+    }
+
+    #[inline]
+    /// Get the document creation timestamp.
+    pub fn timestamp(&self) -> HLCTimestamp {
+        self.ts
+    }
+}
+
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(untagged)]
@@ -33,7 +74,7 @@ pub enum DocValue<'a> {
 
 impl<'a> DocValue<'a> {
     #[inline]
-    /// Returns if the document value is a multi-value field or a single value varient.
+    /// Returns if the document value is a multi-value field or a single value variant.
     pub fn is_multi(&self) -> bool {
         matches!(
             self,
@@ -64,11 +105,4 @@ impl<'a> DocValue<'a> {
             DocValue::MultiJson(_) => ValueType::Json,
         }
     }
-}
-
-
-macro_rules! cast {
-    ($tp:expr, $el:expr) => {{
-
-    }};
 }

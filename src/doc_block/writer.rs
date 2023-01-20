@@ -2,16 +2,12 @@ use std::fs::File;
 use std::io;
 use std::io::{BufWriter, Write};
 use std::path::Path;
-use puppet::{derive_message, puppet_actor};
 
-use crate::doc_block::Flush;
-
-pub struct BlockWriter {
+pub struct FileWriter {
     writer: BufWriter<File>,
 }
 
-#[puppet_actor]
-impl BlockWriter {
+impl FileWriter {
     /// Creates a new writer at the given path.
     pub fn create(path: &Path) -> io::Result<Self> {
         let file = File::create(path)?;
@@ -20,27 +16,18 @@ impl BlockWriter {
         })
     }
 
-    #[puppet]
-    /// Writes a document block to the writer.
-    async fn write_block(&mut self, msg: WriteBlock) -> io::Result<()> {
-        self.writer.write_all(&msg.0)
+    /// Consumes the writer and returns the underlying BufWriter.
+    pub fn into_buf_writer(self) -> BufWriter<File> {
+        self.writer
     }
 
-    #[puppet]
     /// Writes some raw bytes to the writer.
-    async fn write_raw(&mut self, msg: WriteRaw) -> io::Result<()> {
-        self.writer.write_all(&msg.0)
+    pub fn write_raw(&mut self, msg: &[u8]) -> io::Result<()> {
+        self.writer.write_all(msg)
     }
 
-    #[puppet]
     /// Flushes the in-memory buffer to disk.
-    async fn flush(&mut self, _msg: Flush) -> io::Result<()> {
+    pub fn flush(&mut self) -> io::Result<()> {
         self.writer.flush()
     }
 }
-
-pub struct WriteBlock(pub Vec<u8>);
-derive_message!(WriteBlock, io::Result<()>);
-
-pub struct WriteRaw(pub Vec<u8>);
-derive_message!(WriteRaw, io::Result<()>);
