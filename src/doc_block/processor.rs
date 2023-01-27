@@ -75,6 +75,7 @@ impl<W: Write> BlockProcessor<W> {
                 self.schema.fields(),
                 values.len(),
                 values,
+                self.schema.hash_key(),
             );
 
             if let Err(e) = self.check_and_process() {
@@ -157,7 +158,7 @@ mod tests {
             FieldInfo::new(ValueType::U64, false),
         ];
 
-        let schema = BasicSchema::new(fields, field_info);
+        let schema = BasicSchema::new(fields, field_info, None);
 
         BlockProcessor::new(tmp_file, schema)
     }

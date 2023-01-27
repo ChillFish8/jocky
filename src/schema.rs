@@ -13,18 +13,34 @@ pub struct BasicSchema {
     fields: BTreeMap<String, u16>,
     /// More detailed information.
     field_info: Vec<FieldInfo>,
+    /// The field ID to use as the digest hash key.
+    hash_key: Option<u16>,
 }
 
 impl BasicSchema {
     /// Create a new basic schema.
-    pub fn new(fields: BTreeMap<String, u16>, field_info: Vec<FieldInfo>) -> Self {
-        Self { fields, field_info }
+    pub fn new(
+        fields: BTreeMap<String, u16>,
+        field_info: Vec<FieldInfo>,
+        hash_key: Option<u16>,
+    ) -> Self {
+        Self {
+            fields,
+            field_info,
+            hash_key,
+        }
     }
 
     #[inline]
     /// The field names mapping to a given field ID.
     pub fn fields(&self) -> &BTreeMap<String, u16> {
         &self.fields
+    }
+
+    #[inline]
+    /// The field ID to use as the digest hash key.
+    pub fn hash_key(&self) -> Option<u16> {
+        self.hash_key
     }
 
     #[inline]

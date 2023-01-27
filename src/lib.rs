@@ -1,8 +1,6 @@
 mod directories;
 mod doc_block;
 mod document;
-mod indexer;
-mod merger;
 pub mod metadata;
 mod schema;
 

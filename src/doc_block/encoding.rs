@@ -5,6 +5,7 @@ use std::mem::size_of;
 use bytecheck::CheckBytes;
 use datacake_crdt::HLCTimestamp;
 use rkyv::{Archive, Deserialize, Serialize};
+use tantivy::HasLen;
 
 use crate::document::DocValue;
 
@@ -171,13 +172,18 @@ impl DocHeader {
 /// Encodes a document value into a provided value.
 ///
 /// This writes the document header and it's specific values.
+///
+/// An optional hash key can be specified to compute the document's digest.
 pub fn encode_document_to<'a: 'b, 'b, S: AsRef<str> + 'b>(
     buffer: &mut Vec<u8>,
     ts: HLCTimestamp,
     fields_lookup: &BTreeMap<String, FieldId>,
     num_fields: usize,
     fields: impl IntoIterator<Item = (&'b S, &'b DocValue<'a>)>,
-) {
+    hash_key: Option<FieldId>,
+) -> blake3::Hash {
+    let mut hasher = blake3::Hasher::new();
+
     let mut header = DocHeader::new(ts);
     let mut encoding_fields = Vec::with_capacity(num_fields);
     for (field_name, value) in fields {
@@ -192,8 +198,11 @@ pub fn encode_document_to<'a: 'b, 'b, S: AsRef<str> + 'b>(
 
     header.write_to(buffer);
     for (field_id, value) in encoding_fields {
-        encode_value(buffer, field_id, value);
+        let should_hash = hash_key.map(|v| v == field_id).unwrap_or(true);
+        encode_value(buffer, field_id, value, &mut hasher, should_hash);
     }
+
+    hasher.finalize()
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -204,7 +213,7 @@ pub struct Corrupted(ValueType);
 ///
 /// This will not allocated any values apart from JSON values which
 /// must be owned.
-pub fn field_to_value<'a>(field: Field<'a>) -> Result<DocValue<'a>, Corrupted> {
+pub fn field_to_value(field: Field) -> Result<DocValue, Corrupted> {
     let val = match field.value_type {
         ValueType::String => {
             let data = simdutf8::basic::from_utf8(field.value)
@@ -250,7 +259,14 @@ pub fn field_to_value<'a>(field: Field<'a>) -> Result<DocValue<'a>, Corrupted> {
 ///
 /// This is done in a log-format so multi-value fields
 /// are another entry into the log.
-fn encode_value(buffer: &mut Vec<u8>, field_id: FieldId, value: &DocValue) {
+fn encode_value(
+    buffer: &mut Vec<u8>,
+    field_id: FieldId,
+    value: &DocValue,
+    hasher: &mut blake3::Hasher,
+    should_hash: bool,
+) {
+    let start = buffer.len();
     buffer.reserve(size_of::<FieldId>() + 8);
 
     if !value.is_multi() {
@@ -263,7 +279,7 @@ fn encode_value(buffer: &mut Vec<u8>, field_id: FieldId, value: &DocValue) {
         DocValue::F64(v) => buffer.extend_from_slice(&v.to_le_bytes()),
         DocValue::String(v) => {
             buffer.extend_from_slice(&(v.len() as FieldLen).to_le_bytes());
-            buffer.extend_from_slice(v.as_bytes())
+            buffer.extend_from_slice(v.as_bytes());
         },
         DocValue::Bytes(v) => {
             buffer.extend_from_slice(&(v.len() as FieldLen).to_le_bytes());
@@ -314,6 +330,10 @@ fn encode_value(buffer: &mut Vec<u8>, field_id: FieldId, value: &DocValue) {
                 buffer.extend_from_slice(&v);
             }
         },
+    }
+
+    if should_hash {
+        hasher.update(&buffer[start..]);
     }
 }
 
@@ -462,7 +482,7 @@ mod tests {
 
         let ts = HLCTimestamp::now(0, 0);
         let mut output = Vec::new();
-        encode_document_to(&mut output, ts, &get_lookup(), values.len(), &values);
+        encode_document_to(&mut output, ts, &get_lookup(), values.len(), &values, None);
         assert_eq!(output.len(), 51);
     }
 
@@ -477,7 +497,7 @@ mod tests {
         dbg!(size_of::<DocHeader>());
         let ts = HLCTimestamp::now(0, 0);
         let mut output = Vec::new();
-        encode_document_to(&mut output, ts, &get_lookup(), values.len(), &values);
+        encode_document_to(&mut output, ts, &get_lookup(), values.len(), &values, None);
         assert_eq!(output.len(), 51);
 
         let header = DocHeader::try_read_from(&output).expect("Read header");
