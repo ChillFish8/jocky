@@ -1,14 +1,17 @@
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::mem::size_of;
-use datacake_crdt::HLCTimestamp;
+
 use bytecheck::CheckBytes;
-use rkyv::{Serialize, Deserialize, Archive};
+use datacake_crdt::HLCTimestamp;
+use rkyv::{Archive, Deserialize, Serialize};
 
 use crate::document::DocValue;
 
 #[repr(u8)]
-#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
-#[derive(Archive, Serialize, Deserialize)]
+#[derive(
+    Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Archive, Serialize, Deserialize,
+)]
 #[archive_attr(derive(CheckBytes))]
 /// The type of each field value.
 pub enum ValueType {
@@ -32,8 +35,7 @@ type FieldId = u16;
 type FieldLen = u32;
 
 /// The size of the per-document header.
-const DOC_HEADER_SIZE: usize = size_of::<DocHeader>();
-
+const DOC_HEADER_SIZE: usize = 20;
 
 #[derive(Debug)]
 /// The metadata information about the doc structure.
@@ -64,13 +66,14 @@ impl DocHeader {
             num_i64: 0,
             num_f64: 0,
             num_bytes: 0,
-            num_json: 0
+            num_json: 0,
         }
     }
 
     /// Writes the current doc header metadata into a given buffer.
     pub fn write_to(&self, writer: &mut Vec<u8>) {
         writer.reserve(DOC_HEADER_SIZE);
+        writer.extend_from_slice(&self.timestamp.as_u64().to_le_bytes());
         writer.extend_from_slice(&self.num_string.to_le_bytes());
         writer.extend_from_slice(&self.num_u64.to_le_bytes());
         writer.extend_from_slice(&self.num_i64.to_le_bytes());
@@ -108,15 +111,33 @@ impl DocHeader {
     }
 
     /// Reads a set of document fields from a given buffer according to the document header.
-    pub fn read_document_fields<'a>(&self, mut doc_buffer: &'a [u8]) -> Vec<Field<'a>> {
+    pub fn read_document_fields<'a>(
+        &self,
+        mut doc_buffer: &'a [u8],
+        contains_header: bool,
+    ) -> Vec<Field<'a>> {
+        if contains_header {
+            doc_buffer = &doc_buffer[DOC_HEADER_SIZE..];
+        }
+
         let mut fields = Vec::with_capacity(self.num_fields());
 
         // The order is important here as the values are sorted by their type.
-        read_fields(ValueType::String, self.num_string, &mut doc_buffer, &mut fields);
+        read_fields(
+            ValueType::String,
+            self.num_string,
+            &mut doc_buffer,
+            &mut fields,
+        );
         read_fields(ValueType::U64, self.num_u64, &mut doc_buffer, &mut fields);
         read_fields(ValueType::I64, self.num_i64, &mut doc_buffer, &mut fields);
         read_fields(ValueType::F64, self.num_f64, &mut doc_buffer, &mut fields);
-        read_fields(ValueType::Bytes, self.num_bytes, &mut doc_buffer, &mut fields);
+        read_fields(
+            ValueType::Bytes,
+            self.num_bytes,
+            &mut doc_buffer,
+            &mut fields,
+        );
         read_fields(ValueType::Json, self.num_json, &mut doc_buffer, &mut fields);
 
         fields
@@ -150,17 +171,17 @@ impl DocHeader {
 /// Encodes a document value into a provided value.
 ///
 /// This writes the document header and it's specific values.
-pub fn encode_document_to<'a: 'b, 'b>(
+pub fn encode_document_to<'a: 'b, 'b, S: AsRef<str> + 'b>(
     buffer: &mut Vec<u8>,
     ts: HLCTimestamp,
     fields_lookup: &BTreeMap<String, FieldId>,
     num_fields: usize,
-    fields: impl IntoIterator<Item = (&'b &'a str, &'b DocValue<'a>)>,
+    fields: impl IntoIterator<Item = (&'b S, &'b DocValue<'a>)>,
 ) {
     let mut header = DocHeader::new(ts);
     let mut encoding_fields = Vec::with_capacity(num_fields);
     for (field_name, value) in fields {
-        if let Some(field_id) = fields_lookup.get(&**field_name) {
+        if let Some(field_id) = fields_lookup.get(field_name.as_ref()) {
             encoding_fields.push((*field_id, value));
             header.increment_count_on_type(value.value_type());
         }
@@ -169,9 +190,59 @@ pub fn encode_document_to<'a: 'b, 'b>(
     // We must sort the values so that they are correctly organised when reading.
     encoding_fields.sort_by_key(|(_, v)| v.value_type());
 
+    header.write_to(buffer);
     for (field_id, value) in encoding_fields {
         encode_value(buffer, field_id, value);
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("Unable to deserialize field data into value with type: {0:?}")]
+pub struct Corrupted(ValueType);
+
+/// Attempts to convert the raw field into a doc value.
+///
+/// This will not allocated any values apart from JSON values which
+/// must be owned.
+pub fn field_to_value<'a>(field: Field<'a>) -> Result<DocValue<'a>, Corrupted> {
+    let val = match field.value_type {
+        ValueType::String => {
+            let data = simdutf8::basic::from_utf8(field.value)
+                .map_err(|_| Corrupted(field.value_type))?;
+            DocValue::from(data)
+        },
+        ValueType::U64 => {
+            let data = field
+                .value
+                .try_into()
+                .map_err(|_| Corrupted(field.value_type))?;
+            DocValue::from(u64::from_le_bytes(data))
+        },
+        ValueType::I64 => {
+            let data = field
+                .value
+                .try_into()
+                .map_err(|_| Corrupted(field.value_type))?;
+            DocValue::from(i64::from_le_bytes(data))
+        },
+        ValueType::F64 => {
+            let data = field
+                .value
+                .try_into()
+                .map_err(|_| Corrupted(field.value_type))?;
+            DocValue::from(f64::from_le_bytes(data))
+        },
+        ValueType::Bytes => DocValue::Bytes(Cow::Borrowed(field.value)),
+        ValueType::Json => {
+            let data = simdutf8::basic::from_utf8(field.value)
+                .map_err(|_| Corrupted(field.value_type))?;
+            let data =
+                serde_json::from_str(data).map_err(|_| Corrupted(field.value_type))?;
+            DocValue::Json(data)
+        },
+    };
+
+    Ok(val)
 }
 
 #[inline]
@@ -179,7 +250,7 @@ pub fn encode_document_to<'a: 'b, 'b>(
 ///
 /// This is done in a log-format so multi-value fields
 /// are another entry into the log.
-fn encode_value(mut buffer: &mut Vec<u8>, field_id: FieldId, value: &DocValue) {
+fn encode_value(buffer: &mut Vec<u8>, field_id: FieldId, value: &DocValue) {
     buffer.reserve(size_of::<FieldId>() + 8);
 
     if !value.is_multi() {
@@ -190,8 +261,14 @@ fn encode_value(mut buffer: &mut Vec<u8>, field_id: FieldId, value: &DocValue) {
         DocValue::U64(v) => buffer.extend_from_slice(&v.to_le_bytes()),
         DocValue::I64(v) => buffer.extend_from_slice(&v.to_le_bytes()),
         DocValue::F64(v) => buffer.extend_from_slice(&v.to_le_bytes()),
-        DocValue::String(v) => buffer.extend_from_slice(v.as_bytes()),
-        DocValue::Bytes(v) => buffer.extend_from_slice(v),
+        DocValue::String(v) => {
+            buffer.extend_from_slice(&(v.len() as FieldLen).to_le_bytes());
+            buffer.extend_from_slice(v.as_bytes())
+        },
+        DocValue::Bytes(v) => {
+            buffer.extend_from_slice(&(v.len() as FieldLen).to_le_bytes());
+            buffer.extend_from_slice(v);
+        },
         DocValue::MultiU64(values) => {
             for v in values {
                 buffer.extend_from_slice(&field_id.to_le_bytes());
@@ -212,23 +289,29 @@ fn encode_value(mut buffer: &mut Vec<u8>, field_id: FieldId, value: &DocValue) {
         },
         DocValue::MultiString(values) => {
             for v in values {
+                buffer.extend_from_slice(&(v.len() as FieldLen).to_le_bytes());
                 buffer.extend_from_slice(&field_id.to_le_bytes());
                 buffer.extend_from_slice(v.as_bytes());
             }
         },
         DocValue::MultiBytes(values) => {
             for v in values {
+                buffer.extend_from_slice(&(v.len() as FieldLen).to_le_bytes());
                 buffer.extend_from_slice(&field_id.to_le_bytes());
                 buffer.extend_from_slice(v);
             }
         },
         DocValue::Json(v) => {
-            serde_json::to_writer(buffer, v).expect("Encode valid JSON.");
+            let v = serde_json::to_vec(v).expect("Encode valid JSON.");
+            buffer.extend_from_slice(&(v.len() as FieldLen).to_le_bytes());
+            buffer.extend_from_slice(&v);
         },
         DocValue::MultiJson(values) => {
             for v in values {
                 buffer.extend_from_slice(&field_id.to_le_bytes());
-                serde_json::to_writer(&mut buffer, v).expect("Encode valid JSON.");
+                let v = serde_json::to_vec(v).expect("Encode valid JSON.");
+                buffer.extend_from_slice(&(v.len() as FieldLen).to_le_bytes());
+                buffer.extend_from_slice(&v);
             }
         },
     }
@@ -261,7 +344,6 @@ fn read_timestamp(buffer: &mut &[u8]) -> Option<HLCTimestamp> {
     Some(HLCTimestamp::from_u64(u64::from_le_bytes(slice)))
 }
 
-
 #[inline]
 /// Reads a set of field entries from a given buffer according to the value type and
 /// the number of fields that are supposed to exist for that type.
@@ -277,21 +359,44 @@ fn read_fields<'a>(
         let (field_id_bytes, rest) = buffer.split_at(size_of::<FieldId>());
         *buffer = rest;
 
-        let slice = field_id_bytes.try_into()
+        let slice = field_id_bytes
+            .try_into()
             .expect("Read correct number of bytes but failed to cast into array.");
         let field_id = FieldId::from_le_bytes(slice);
-
         match value_type {
-            ValueType::String => read_var_length_field(value_type, field_id, buffer, output),
-            ValueType::U64 => read_known_length_field(value_type, field_id, buffer, output, size_of::<u64>()),
-            ValueType::I64 => read_known_length_field(value_type, field_id, buffer, output, size_of::<i64>()),
-            ValueType::F64 => read_known_length_field(value_type, field_id, buffer, output, size_of::<f64>()),
-            ValueType::Bytes => read_var_length_field(value_type, field_id, buffer, output),
-            ValueType::Json => read_var_length_field(value_type, field_id, buffer, output),
+            ValueType::String => {
+                read_var_length_field(value_type, field_id, buffer, output)
+            },
+            ValueType::U64 => read_known_length_field(
+                value_type,
+                field_id,
+                buffer,
+                output,
+                size_of::<u64>(),
+            ),
+            ValueType::I64 => read_known_length_field(
+                value_type,
+                field_id,
+                buffer,
+                output,
+                size_of::<i64>(),
+            ),
+            ValueType::F64 => read_known_length_field(
+                value_type,
+                field_id,
+                buffer,
+                output,
+                size_of::<f64>(),
+            ),
+            ValueType::Bytes => {
+                read_var_length_field(value_type, field_id, buffer, output)
+            },
+            ValueType::Json => {
+                read_var_length_field(value_type, field_id, buffer, output)
+            },
         }
     }
 }
-
 
 #[inline]
 /// Reads a field entry of a unknown size from the buffer.
@@ -307,7 +412,8 @@ fn read_var_length_field<'a>(
     let (field_len_bytes, rest) = buffer.split_at(size_of::<FieldLen>());
     *buffer = rest;
 
-    let slice = field_len_bytes.try_into()
+    let slice = field_len_bytes
+        .try_into()
         .expect("Read correct number of bytes but failed to cast into array.");
     let field_len = FieldLen::from_le_bytes(slice);
 
@@ -326,6 +432,68 @@ fn read_known_length_field<'a>(
     let (value, rest) = buffer.split_at(len);
     *buffer = rest;
 
-    output.push(Field { value_type, field_id, value });
+    output.push(Field {
+        value_type,
+        field_id,
+        value,
+    });
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::doc_values;
+
+    fn get_lookup() -> BTreeMap<String, FieldId> {
+        let mut fields = BTreeMap::new();
+        fields.insert("name".to_string(), 0);
+        fields.insert("age".to_string(), 1);
+        fields.insert("time".to_string(), 2);
+        fields
+    }
+
+    #[test]
+    fn test_serialize() {
+        let values = doc_values! {
+            "name" => "bobby",
+            "age" => 15_u64,
+            "time" => 12312311241241_i64,
+        };
+
+        let ts = HLCTimestamp::now(0, 0);
+        let mut output = Vec::new();
+        encode_document_to(&mut output, ts, &get_lookup(), values.len(), &values);
+        assert_eq!(output.len(), 51);
+    }
+
+    #[test]
+    fn test_deserialize() {
+        let values = doc_values! {
+            "name" => "bobby",
+            "age" => 15_u64,
+            "time" => 12312311241241_i64,
+        };
+
+        dbg!(size_of::<DocHeader>());
+        let ts = HLCTimestamp::now(0, 0);
+        let mut output = Vec::new();
+        encode_document_to(&mut output, ts, &get_lookup(), values.len(), &values);
+        assert_eq!(output.len(), 51);
+
+        let header = DocHeader::try_read_from(&output).expect("Read header");
+        assert_eq!(header.timestamp, ts);
+        assert_eq!(header.num_u64, 1);
+        assert_eq!(header.num_i64, 1);
+        assert_eq!(header.num_f64, 0);
+        assert_eq!(header.num_string, 1);
+        assert_eq!(header.num_json, 0);
+        assert_eq!(header.num_bytes, 0);
+
+        let fields = header.read_document_fields(&output, true);
+        assert_eq!(fields.len(), 3);
+
+        assert_eq!(fields[0].value_type, ValueType::String);
+        assert_eq!(fields[1].value_type, ValueType::U64);
+        assert_eq!(fields[2].value_type, ValueType::I64);
+    }
+}

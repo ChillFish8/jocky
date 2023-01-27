@@ -6,9 +6,9 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use datacake_crdt::HLCTimestamp;
-use tracing::info;
-use jocky::{DocValue, encode_document_to};
+use jocky::{encode_document_to, DocValue};
 use mimalloc::MiMalloc;
+use tracing::info;
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
@@ -16,8 +16,10 @@ static GLOBAL: MiMalloc = MiMalloc;
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    let mut writer = BufWriter::with_capacity(512 << 10, File::create("./datasets/data.store")?);
-    let reader = BufReader::with_capacity(512 << 10, File::open("./datasets/data.json")?).lines();
+    let mut writer =
+        BufWriter::with_capacity(512 << 10, File::create("./datasets/data.store")?);
+    let reader =
+        BufReader::with_capacity(512 << 10, File::open("./datasets/data.json")?).lines();
 
     let mut clock = HLCTimestamp::now(0, 0);
     let mut schema = BTreeMap::new();
@@ -62,7 +64,11 @@ fn main() -> anyhow::Result<()> {
         count += 1;
 
         if (count % 1_000_000) == 0 {
-            info!("Total: {}, Avg encode time: {:?}", count, encode_time / count)
+            info!(
+                "Total: {}, Avg encode time: {:?}",
+                count,
+                encode_time / count
+            )
         }
     }
     writer.flush()?;
@@ -71,7 +77,6 @@ fn main() -> anyhow::Result<()> {
 
     Ok(())
 }
-
 
 pub struct StaticDoc {
     _line: String,

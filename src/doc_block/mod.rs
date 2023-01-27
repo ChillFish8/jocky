@@ -1,7 +1,12 @@
-mod writer;
-mod processor;
 mod encoding;
+mod processor;
 
-pub use writer::FileWriter;
+pub use encoding::{
+    encode_document_to,
+    field_to_value,
+    Corrupted,
+    DocHeader,
+    Field,
+    ValueType,
+};
 pub use processor::{BLOCK_SIZE, COMPRESSION_LEVEL};
-pub use encoding::{ValueType, DocHeader, Field, encode_document_to};

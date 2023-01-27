@@ -26,7 +26,7 @@ impl SegmentMetadata {
         self.files.insert(file, location);
     }
 
-    pub fn get_location(&mut self, file: &str) -> Option<Range<u64>> {
+    pub fn get_location(&self, file: &str) -> Option<Range<u64>> {
         self.files.get(file).cloned()
     }
 

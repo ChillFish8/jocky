@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
+
 use bytecheck::CheckBytes;
-use rkyv::{Serialize, Deserialize, Archive};
+use rkyv::{Archive, Deserialize, Serialize};
 
 use crate::ValueType;
 
@@ -15,9 +16,14 @@ pub struct BasicSchema {
 }
 
 impl BasicSchema {
+    /// Create a new basic schema.
+    pub fn new(fields: BTreeMap<String, u16>, field_info: Vec<FieldInfo>) -> Self {
+        Self { fields, field_info }
+    }
+
     #[inline]
     /// The field names mapping to a given field ID.
-    pub fn fields(&self) ->&BTreeMap<String, u16> {
+    pub fn fields(&self) -> &BTreeMap<String, u16> {
         &self.fields
     }
 
@@ -38,6 +44,14 @@ pub struct FieldInfo {
 }
 
 impl FieldInfo {
+    /// Create a new field info.
+    pub fn new(value_type: ValueType, is_multi: bool) -> Self {
+        Self {
+            value_type,
+            is_multi,
+        }
+    }
+
     #[inline]
     /// The value type of the doc field.
     pub fn value_type(&self) -> ValueType {
