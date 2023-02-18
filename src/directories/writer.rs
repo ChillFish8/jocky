@@ -47,7 +47,7 @@ impl<D: Directory + Clone> DirectoryWriter<D> {
                 Err(OpenReadError::IoError { io_error, .. }) => {
                     return Err(io::Error::new(io_error.kind(), io_error.to_string()))
                 },
-                _ => unimplemented!()
+                _ => unimplemented!(),
             };
 
             let file_start = cursor;
@@ -133,14 +133,13 @@ impl<D: Directory + Clone> Directory for DirectoryWriter<D> {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use tantivy::collector::TopDocs;
+    use tantivy::directory::MmapDirectory;
     use tantivy::query::QueryParser;
     use tantivy::schema::*;
     use tantivy::{doc, Index, IndexSettings, ReloadPolicy};
-    use tantivy::directory::MmapDirectory;
 
     use super::*;
 

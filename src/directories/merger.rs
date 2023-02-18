@@ -20,10 +20,7 @@ pub struct DirectoryMerger<D: Directory> {
 
 impl<D: Directory> DirectoryMerger<D> {
     /// Create a new directory writer.
-    pub fn new(
-        writer: DirectoryWriter<D>,
-        readers: Vec<DirectoryReader>,
-    ) -> Self {
+    pub fn new(writer: DirectoryWriter<D>, readers: Vec<DirectoryReader>) -> Self {
         Self {
             writer,
             readers,
