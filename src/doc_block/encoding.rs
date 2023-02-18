@@ -181,7 +181,7 @@ pub fn encode_document_to<'a: 'b, 'b, S: AsRef<str> + 'b>(
     num_fields: usize,
     fields: impl IntoIterator<Item = (&'b S, &'b DocValue<'a>)>,
     hash_key: Option<FieldId>,
-) -> blake3::Hash {
+) -> u64 {
     let mut hasher = blake3::Hasher::new();
 
     let mut header = DocHeader::new(ts);
@@ -202,7 +202,10 @@ pub fn encode_document_to<'a: 'b, 'b, S: AsRef<str> + 'b>(
         encode_value(buffer, field_id, value, &mut hasher, should_hash);
     }
 
-    hasher.finalize()
+    let mut reader = hasher.finalize_xof();
+    let mut buff = [0; 8];
+    reader.fill(&mut buff[..]);
+    u64::from_be_bytes(buff)
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -243,10 +246,8 @@ pub fn field_to_value(field: Field) -> Result<DocValue, Corrupted> {
         },
         ValueType::Bytes => DocValue::Bytes(Cow::Borrowed(field.value)),
         ValueType::Json => {
-            let data = simdutf8::basic::from_utf8(field.value)
+            let data = serde_cbor::from_slice(field.value)
                 .map_err(|_| Corrupted(field.value_type))?;
-            let data =
-                serde_json::from_str(data).map_err(|_| Corrupted(field.value_type))?;
             DocValue::Json(data)
         },
     };
@@ -318,14 +319,14 @@ fn encode_value(
             }
         },
         DocValue::Json(v) => {
-            let v = serde_json::to_vec(v).expect("Encode valid JSON.");
+            let v = serde_cbor::to_vec(v).expect("Encode valid JSON.");
             buffer.extend_from_slice(&(v.len() as FieldLen).to_le_bytes());
             buffer.extend_from_slice(&v);
         },
         DocValue::MultiJson(values) => {
             for v in values {
                 buffer.extend_from_slice(&field_id.to_le_bytes());
-                let v = serde_json::to_vec(v).expect("Encode valid JSON.");
+                let v = serde_cbor::to_vec(v).expect("Encode valid JSON.");
                 buffer.extend_from_slice(&(v.len() as FieldLen).to_le_bytes());
                 buffer.extend_from_slice(&v);
             }

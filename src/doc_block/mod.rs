@@ -9,4 +9,4 @@ pub use encoding::{
     Field,
     ValueType,
 };
-pub use processor::{BLOCK_SIZE, COMPRESSION_LEVEL};
+pub use processor::{BLOCK_SIZE, COMPRESSION_LEVEL, BlockProcessor};

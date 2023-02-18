@@ -37,14 +37,8 @@ impl<D: Directory + Clone> DirectoryWriter<D> {
         self.files_to_read.lock().clone()
     }
 
-    pub fn write_segment(&self, fp: &Path) -> io::Result<()> {
-        #[cfg(unix)]
-        if let Some(parent) = fp.parent() {
-            File::open(parent)?.sync_data()?;
-        }
-
-        let file = File::create(fp)?;
-        let mut writer = BufWriter::new(file);
+    /// Writes the contents of the directory to a given writer.
+    pub fn write_segment<W: Write>(&self, mut writer: W) -> io::Result<()> {
         let mut cursor = 0;
         let mut metadata = SegmentMetadata::default();
 
@@ -74,10 +68,6 @@ impl<D: Directory + Clone> DirectoryWriter<D> {
         crate::metadata::write_metadata_offsets(&mut writer, metadata_start, cursor)?;
 
         writer.flush()?;
-        writer
-            .into_inner()
-            .unwrap()
-            .sync_data()?;
 
         Ok(())
     }
