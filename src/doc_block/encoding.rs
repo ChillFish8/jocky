@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
+use std::hash::{Hash, Hasher};
 use std::mem::size_of;
 
 use bytecheck::CheckBytes;
@@ -182,7 +183,7 @@ pub fn encode_document_to<'a: 'b, 'b, S: AsRef<str> + 'b>(
     fields: impl IntoIterator<Item = (&'b S, &'b DocValue<'a>)>,
     hash_key: Option<FieldId>,
 ) -> u64 {
-    let mut hasher = blake3::Hasher::new();
+    let mut hasher = cityhash_sys::CityHash64Hasher::default();
 
     let mut header = DocHeader::new(ts);
     let mut encoding_fields = Vec::with_capacity(num_fields);
@@ -202,10 +203,7 @@ pub fn encode_document_to<'a: 'b, 'b, S: AsRef<str> + 'b>(
         encode_value(buffer, field_id, value, &mut hasher, should_hash);
     }
 
-    let mut reader = hasher.finalize_xof();
-    let mut buff = [0; 8];
-    reader.fill(&mut buff[..]);
-    u64::from_be_bytes(buff)
+    hasher.finish()
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -264,7 +262,7 @@ fn encode_value(
     buffer: &mut Vec<u8>,
     field_id: FieldId,
     value: &DocValue,
-    hasher: &mut blake3::Hasher,
+    hasher: &mut cityhash_sys::CityHash64Hasher,
     should_hash: bool,
 ) {
     let start = buffer.len();
@@ -334,7 +332,7 @@ fn encode_value(
     }
 
     if should_hash {
-        hasher.update(&buffer[start..]);
+        buffer[start..].hash(hasher);
     }
 }
 
