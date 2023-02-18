@@ -11,7 +11,7 @@ pub const METADATA_HEADER_SIZE: usize = mem::size_of::<u64>() * 2;
 
 #[repr(C)]
 #[derive(Debug, Default, Serialize, Deserialize, Archive)]
-#[archive_attr(derive(CheckBytes, Debug))]
+#[archive_attr(repr(C), derive(CheckBytes, Debug))]
 pub struct SegmentMetadata {
     files: BTreeMap<String, Range<u64>>,
     hot_cache: Vec<u8>,
@@ -26,7 +26,7 @@ impl SegmentMetadata {
         self.files.insert(file, location);
     }
 
-    pub fn get_location(&mut self, file: &str) -> Option<Range<u64>> {
+    pub fn get_location(&self, file: &str) -> Option<Range<u64>> {
         self.files.get(file).cloned()
     }
 
@@ -48,8 +48,8 @@ impl SegmentMetadata {
 pub fn get_metadata_offsets(
     mut offset_slice: &[u8],
 ) -> Result<(u64, u64), TryFromSliceError> {
-    let start = read_be_u64(&mut offset_slice)? as u64;
-    let len = read_be_u64(&mut offset_slice)? as u64;
+    let start = read_be_u64(&mut offset_slice)?;
+    let len = read_be_u64(&mut offset_slice)?;
     Ok((start, len))
 }
 
