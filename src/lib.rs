@@ -16,5 +16,6 @@ pub use doc_block::{
     ValueType,
     BLOCK_SIZE,
     COMPRESSION_LEVEL,
+    BlockProcessor,
 };
 pub use document::{DocValue, ReferencingDoc};

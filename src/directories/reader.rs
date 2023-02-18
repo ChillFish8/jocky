@@ -30,7 +30,7 @@ pub struct DirectoryReader {
 
 impl DirectoryReader {
     /// Create a new directory writer.
-    pub(crate) fn new(
+    pub fn new(
         fp: impl AsRef<Path>,
         bytes: OwnedBytes,
         metadata: SegmentMetadata,

@@ -1,8 +1,7 @@
 use std::collections::BTreeSet;
 use std::fmt::{Debug, Formatter};
-use std::fs::File;
 use std::io;
-use std::io::{BufWriter, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -152,7 +151,9 @@ mod tests {
 
         create_segment(write.clone()).unwrap();
 
-        write.write_segment("./out.segment".as_ref()).unwrap();
+        let mut segment = Vec::new();
+        write.write_segment(&mut segment).unwrap();
+        assert_eq!(segment.len(), 32)
     }
 
     fn create_segment(directory: impl Directory) -> tantivy::Result<()> {
