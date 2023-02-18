@@ -152,7 +152,7 @@ mod tests {
 
         let mut segment = Vec::new();
         write.write_segment(&mut segment).unwrap();
-        assert_eq!(segment.len(), 32)
+        assert_eq!(segment.len(), 5995)
     }
 
     fn create_segment(directory: impl Directory) -> tantivy::Result<()> {
