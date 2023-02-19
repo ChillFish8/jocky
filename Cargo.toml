@@ -17,7 +17,7 @@ simdutf8 = "0.1.4"
 thiserror = "1"
 serde_cbor = "0.11.2"
 
-# Debugging
+
 tokio = { version = "1", features = ["full"] }
 rkyv = { version = "0.7.39", features = ["validation"] }
 serde = { version = "1", features = ["derive"] }
