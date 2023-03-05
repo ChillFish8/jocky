@@ -8,7 +8,6 @@ edition = "2021"
 [dependencies]
 cityhash-sys = "1.0.2"
 bytecheck = "0.6.9"
-futures-lite = "1.12.0"
 parking_lot = "0.12.1"
 tantivy = "0.19"
 zstd = "0.12.1+zstd.1.5.2"
@@ -17,9 +16,7 @@ thiserror = "1"
 serde_cbor = "0.11"
 serde_json = "1"
 
-
-tokio = { version = "1", features = ["full"] }
-rkyv = { version = "0.7.39", features = ["validation"] }
+rkyv = { version = "0.7.40", features = ["validation"] }
 serde = { version = "1", features = ["derive"] }
 
 datacake-crdt = { version = "0.4.0" }

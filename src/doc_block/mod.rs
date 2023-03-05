@@ -1,5 +1,4 @@
 mod encoding;
-mod processor;
 
 pub use encoding::{
     encode_document_to,
@@ -9,4 +8,3 @@ pub use encoding::{
     Field,
     ValueType,
 };
-pub use processor::{BlockProcessor, BLOCK_SIZE, COMPRESSION_LEVEL};

@@ -10,12 +10,9 @@ pub use directories::{DirectoryMerger, DirectoryReader, DirectoryWriter};
 pub use doc_block::{
     encode_document_to,
     field_to_value,
-    BlockProcessor,
     Corrupted,
     DocHeader,
     Field,
     ValueType,
-    BLOCK_SIZE,
-    COMPRESSION_LEVEL,
 };
 pub use document::{DocValue, ReferencingDoc};
