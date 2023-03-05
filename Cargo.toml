@@ -16,7 +16,7 @@ thiserror = "1"
 serde_cbor = "0.11"
 serde_json = "1"
 
-rkyv = { version = "0.7.40", features = ["validation"] }
+rkyv = { version = "0.7", features = ["validation"] }
 serde = { version = "1", features = ["derive"] }
 
 datacake-crdt = { version = "0.4.0" }
