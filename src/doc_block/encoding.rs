@@ -1,14 +1,13 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
-use std::hash::{Hash, Hasher};
+use std::hash::Hasher;
 use std::mem::size_of;
 
 use bytecheck::CheckBytes;
-use datacake_crdt::HLCTimestamp;
 use rkyv::{Archive, Deserialize, Serialize};
 use tantivy::HasLen;
 
-use crate::document::DocValue;
+use crate::document::{DocField, DocValue};
 
 #[repr(u8)]
 #[derive(
@@ -29,6 +28,8 @@ pub enum ValueType {
     Bytes = 4,
     /// The field value is of type `json`.
     Json = 5,
+    /// The field is null.
+    Null = 6,
 }
 
 /// The ID of the field in the doc.
@@ -43,7 +44,7 @@ const DOC_HEADER_SIZE: usize = 20;
 /// The metadata information about the doc structure.
 pub struct DocHeader {
     /// The timestamp the document was created.
-    pub timestamp: HLCTimestamp,
+    pub timestamp: u64,
     /// The number of `string` fields in the doc.
     pub num_string: u16,
     /// The number of `u64` fields in the doc.
@@ -60,7 +61,7 @@ pub struct DocHeader {
 
 impl DocHeader {
     /// Creates a new empty document header.
-    pub fn new(timestamp: HLCTimestamp) -> Self {
+    pub fn new(timestamp: u64) -> Self {
         Self {
             timestamp,
             num_string: 0,
@@ -75,7 +76,7 @@ impl DocHeader {
     /// Writes the current doc header metadata into a given buffer.
     pub fn write_to(&self, writer: &mut Vec<u8>) {
         writer.reserve(DOC_HEADER_SIZE);
-        writer.extend_from_slice(&self.timestamp.as_u64().to_le_bytes());
+        writer.extend_from_slice(&self.timestamp.to_le_bytes());
         writer.extend_from_slice(&self.num_string.to_le_bytes());
         writer.extend_from_slice(&self.num_u64.to_le_bytes());
         writer.extend_from_slice(&self.num_i64.to_le_bytes());
@@ -166,6 +167,7 @@ impl DocHeader {
             ValueType::Json => {
                 self.num_json += 1;
             },
+            ValueType::Null => {},
         }
     }
 }
@@ -175,12 +177,15 @@ impl DocHeader {
 /// This writes the document header and it's specific values.
 ///
 /// An optional hash key can be specified to compute the document's digest.
+///
+/// WARNING:
+/// Multi-value fields but all be of the same type, they cannot be separate.
 pub fn encode_document_to<'a: 'b, 'b, S: AsRef<str> + 'b>(
     buffer: &mut Vec<u8>,
-    ts: HLCTimestamp,
+    ts: u64,
     fields_lookup: &BTreeMap<String, FieldId>,
     num_fields: usize,
-    fields: impl IntoIterator<Item = (&'b S, &'b DocValue<'a>)>,
+    fields: impl IntoIterator<Item = (&'b S, &'b DocField<'a>)>,
     hash_key: Option<FieldId>,
 ) -> u64 {
     let mut hasher = cityhash_sys::CityHash64Hasher::default();
@@ -198,9 +203,9 @@ pub fn encode_document_to<'a: 'b, 'b, S: AsRef<str> + 'b>(
     encoding_fields.sort_by_key(|(_, v)| v.value_type());
 
     header.write_to(buffer);
-    for (field_id, value) in encoding_fields {
+    for (field_id, field) in encoding_fields {
         let should_hash = hash_key.map(|v| v == field_id).unwrap_or(true);
-        encode_value(buffer, field_id, value, &mut hasher, should_hash);
+        encode_field(buffer, field_id, field, &mut hasher, should_hash);
     }
 
     hasher.finish()
@@ -248,16 +253,40 @@ pub fn field_to_value(field: Field) -> Result<DocValue, Corrupted> {
                 .map_err(|_| Corrupted(field.value_type))?;
             DocValue::Json(data)
         },
+        ValueType::Null => DocValue::Null,
     };
 
     Ok(val)
 }
 
 #[inline]
-/// Writes a single doc value into the buffer.
+/// Writes a single doc field into the buffer.
 ///
 /// This is done in a log-format so multi-value fields
 /// are another entry into the log.
+fn encode_field(
+    buffer: &mut Vec<u8>,
+    field_id: FieldId,
+    field: &DocField,
+    hasher: &mut cityhash_sys::CityHash64Hasher,
+    should_hash: bool,
+) {
+    match field {
+        DocField::Single(value) => {
+            encode_value(buffer, field_id, value, hasher, should_hash)
+        },
+        DocField::Many(values) => {
+            for value in values {
+                // We assume the values in the array are all the same type.
+                // Otherwise the decoder may not be able to decode the value correctly.
+                encode_value(buffer, field_id, value, hasher, should_hash)
+            }
+        },
+    }
+}
+
+#[inline]
+/// Writes a single doc value into the buffer.
 fn encode_value(
     buffer: &mut Vec<u8>,
     field_id: FieldId,
@@ -266,11 +295,7 @@ fn encode_value(
     should_hash: bool,
 ) {
     let start = buffer.len();
-    buffer.reserve(size_of::<FieldId>() + 8);
-
-    if !value.is_multi() {
-        buffer.extend_from_slice(&field_id.to_le_bytes());
-    }
+    buffer.extend_from_slice(&field_id.to_le_bytes());
 
     match value {
         DocValue::U64(v) => buffer.extend_from_slice(&v.to_le_bytes()),
@@ -284,55 +309,16 @@ fn encode_value(
             buffer.extend_from_slice(&(v.len() as FieldLen).to_le_bytes());
             buffer.extend_from_slice(v);
         },
-        DocValue::MultiU64(values) => {
-            for v in values {
-                buffer.extend_from_slice(&field_id.to_le_bytes());
-                buffer.extend_from_slice(&v.to_le_bytes());
-            }
-        },
-        DocValue::MultiI64(values) => {
-            for v in values {
-                buffer.extend_from_slice(&field_id.to_le_bytes());
-                buffer.extend_from_slice(&v.to_le_bytes());
-            }
-        },
-        DocValue::MultiF64(values) => {
-            for v in values {
-                buffer.extend_from_slice(&field_id.to_le_bytes());
-                buffer.extend_from_slice(&v.to_le_bytes());
-            }
-        },
-        DocValue::MultiString(values) => {
-            for v in values {
-                buffer.extend_from_slice(&(v.len() as FieldLen).to_le_bytes());
-                buffer.extend_from_slice(&field_id.to_le_bytes());
-                buffer.extend_from_slice(v.as_bytes());
-            }
-        },
-        DocValue::MultiBytes(values) => {
-            for v in values {
-                buffer.extend_from_slice(&(v.len() as FieldLen).to_le_bytes());
-                buffer.extend_from_slice(&field_id.to_le_bytes());
-                buffer.extend_from_slice(v);
-            }
-        },
         DocValue::Json(v) => {
             let v = serde_cbor::to_vec(v).expect("Encode valid JSON.");
             buffer.extend_from_slice(&(v.len() as FieldLen).to_le_bytes());
             buffer.extend_from_slice(&v);
         },
-        DocValue::MultiJson(values) => {
-            for v in values {
-                buffer.extend_from_slice(&field_id.to_le_bytes());
-                let v = serde_cbor::to_vec(v).expect("Encode valid JSON.");
-                buffer.extend_from_slice(&(v.len() as FieldLen).to_le_bytes());
-                buffer.extend_from_slice(&v);
-            }
-        },
+        DocValue::Null => {},
     }
 
     if should_hash {
-        buffer[start..].hash(hasher);
+        hasher.write(&buffer[start..]);
     }
 }
 
@@ -355,12 +341,12 @@ fn read_u16_le(buffer: &mut &[u8]) -> Option<u16> {
 }
 
 #[inline]
-fn read_timestamp(buffer: &mut &[u8]) -> Option<HLCTimestamp> {
+fn read_timestamp(buffer: &mut &[u8]) -> Option<u64> {
     let (int_bytes, rest) = buffer.split_at(size_of::<u64>());
     *buffer = rest;
 
     let slice = int_bytes.try_into().ok()?;
-    Some(HLCTimestamp::from_u64(u64::from_le_bytes(slice)))
+    Some(u64::from_le_bytes(slice))
 }
 
 #[inline]
@@ -413,6 +399,7 @@ fn read_fields<'a>(
             ValueType::Json => {
                 read_var_length_field(value_type, field_id, buffer, output)
             },
+            ValueType::Null => {},
         }
     }
 }
@@ -479,9 +466,8 @@ mod tests {
             "time" => 12312311241241_i64,
         };
 
-        let ts = HLCTimestamp::now(0, 0);
         let mut output = Vec::new();
-        encode_document_to(&mut output, ts, &get_lookup(), values.len(), &values, None);
+        encode_document_to(&mut output, 0, &get_lookup(), values.len(), &values, None);
         assert_eq!(output.len(), 51);
     }
 
@@ -494,13 +480,12 @@ mod tests {
         };
 
         dbg!(size_of::<DocHeader>());
-        let ts = HLCTimestamp::now(0, 0);
         let mut output = Vec::new();
-        encode_document_to(&mut output, ts, &get_lookup(), values.len(), &values, None);
+        encode_document_to(&mut output, 0, &get_lookup(), values.len(), &values, None);
         assert_eq!(output.len(), 51);
 
         let header = DocHeader::try_read_from(&output).expect("Read header");
-        assert_eq!(header.timestamp, ts);
+        assert_eq!(header.timestamp, 0);
         assert_eq!(header.num_u64, 1);
         assert_eq!(header.num_i64, 1);
         assert_eq!(header.num_f64, 0);

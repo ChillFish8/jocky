@@ -15,4 +15,4 @@ pub use doc_block::{
     Field,
     ValueType,
 };
-pub use document::{DocValue, ReferencingDoc};
+pub use document::{DocField, DocValue, ReferencingDoc};
