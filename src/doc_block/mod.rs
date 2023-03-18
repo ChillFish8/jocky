@@ -6,5 +6,6 @@ pub use encoding::{
     Corrupted,
     DocHeader,
     Field,
+    FieldId,
     ValueType,
 };

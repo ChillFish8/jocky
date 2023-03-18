@@ -33,7 +33,7 @@ pub enum ValueType {
 }
 
 /// The ID of the field in the doc.
-type FieldId = u16;
+pub type FieldId = u16;
 /// The length of the field value in bytes.
 type FieldLen = u32;
 

@@ -13,6 +13,7 @@ pub use doc_block::{
     Corrupted,
     DocHeader,
     Field,
+    FieldId,
     ValueType,
 };
 pub use document::{DocField, DocValue, ReferencingDoc};
