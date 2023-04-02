@@ -30,6 +30,10 @@ impl SegmentMetadata {
         self.files.get(file).cloned()
     }
 
+    pub fn files(&self) -> &BTreeMap<String, Range<u64>> {
+        &self.files
+    }
+
     pub fn to_bytes(&self) -> io::Result<Vec<u8>> {
         rkyv::to_bytes::<_, 4096>(self)
             .map(|buf| buf.into_vec())
