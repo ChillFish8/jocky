@@ -37,14 +37,20 @@ impl SegmentMetadata {
     pub fn to_bytes(&self) -> io::Result<Vec<u8>> {
         rkyv::to_bytes::<_, 4096>(self)
             .map(|buf| buf.into_vec())
-            .map_err(|_| {
-                io::Error::new(ErrorKind::Other, "Could not serialize metadata.")
+            .map_err(|e| {
+                io::Error::new(
+                    ErrorKind::Other,
+                    format!("Could not serialize metadata: {e:?}"),
+                )
             })
     }
 
     pub fn from_buffer(buf: &[u8]) -> io::Result<Self> {
-        rkyv::from_bytes(buf).map_err(|_| {
-            io::Error::new(ErrorKind::Other, "Could not deserialize metadata.")
+        rkyv::from_bytes(buf).map_err(|e| {
+            io::Error::new(
+                ErrorKind::Other,
+                format!("Could not deserialize metadata: {e:?}"),
+            )
         })
     }
 }
